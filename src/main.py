@@ -34,6 +34,13 @@ if application_path not in sys.path:
 from config import DB_PATH, SURFACES, calculate_bet_model
 from database import db
 from betfair_capture import BetfairTennisCapture
+
+# Cloud sync for Discord monitor
+try:
+    from cloud_sync import sync_bet_to_cloud
+    CLOUD_SYNC_AVAILABLE = True
+except ImportError:
+    CLOUD_SYNC_AVAILABLE = False
 from tennis_abstract_scraper import TennisAbstractScraper
 from match_analyzer import MatchAnalyzerUI
 from bet_suggester import BetSuggesterUI
@@ -1464,9 +1471,17 @@ class MainApplication:
                     continue
                 db_bet['model'] = model
 
-                db.add_bet(db_bet)
+                bet_id = db.add_bet(db_bet)
                 added += 1
                 added_this_batch.add(batch_key)
+
+                # Sync to cloud for Discord monitor
+                if CLOUD_SYNC_AVAILABLE and bet_id:
+                    try:
+                        db_bet['id'] = bet_id
+                        sync_bet_to_cloud(db_bet)
+                    except Exception:
+                        pass  # Silent fail - cloud sync is optional
 
             except Exception as e:
                 print(f"Error adding auto bet: {e}")
