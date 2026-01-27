@@ -686,7 +686,30 @@ class BetSuggester:
         results = []
 
         for match in matches:
-            if match.get('player1_id') and match.get('player2_id'):
+            p1_id = match.get('player1_id')
+            p2_id = match.get('player2_id')
+            p1_name = match.get('player1_name', '')
+            p2_name = match.get('player2_name', '')
+
+            # Skip doubles matches
+            if '/' in p1_name or '/' in p2_name:
+                continue
+
+            # Try to resolve missing player IDs using name matcher
+            if not p1_id or not self.db.get_player(p1_id):
+                mapped_id = name_matcher.get_db_id(p1_name)
+                if mapped_id and self.db.get_player(mapped_id):
+                    p1_id = mapped_id
+                    match['player1_id'] = mapped_id
+
+            if not p2_id or not self.db.get_player(p2_id):
+                mapped_id = name_matcher.get_db_id(p2_name)
+                if mapped_id and self.db.get_player(mapped_id):
+                    p2_id = mapped_id
+                    match['player2_id'] = mapped_id
+
+            # Now check if we have both player IDs
+            if p1_id and p2_id:
                 try:
                     analysis = self.analyze_upcoming_match(match)
                     results.append(analysis)
