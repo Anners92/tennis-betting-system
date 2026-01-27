@@ -57,7 +57,7 @@ python -c "import shutil; shutil.copytree(r'C:\Users\marca\AppData\Local\Temp\te
 - **8-factor match analysis model** (form, surface, ranking, fatigue, recent_loss, h2h, injury, momentum)
 - **4 betting models**: M3 (5-15% edge), M4 (prob≥60%), M7 (3-8% edge + odds<2.50), M8 (prob≥55% + odds<2.50)
 - Data sources: Betfair Exchange API, GitHub tennisdata, Tennis Explorer
-- Current version: **1.4.7**
+- Current version: **2.0.0**
 
 ## Factor Weights (v2.0)
 

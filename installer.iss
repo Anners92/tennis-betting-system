@@ -2,7 +2,7 @@
 ; Download Inno Setup from: https://jrsoftware.org/isdl.php
 
 #define MyAppName "Tennis Betting System"
-#define MyAppVersion "1.4.6"
+#define MyAppVersion "2.0"
 #define MyAppPublisher "Tennis Betting"
 #define MyAppExeName "TennisBettingSystem.exe"
 
