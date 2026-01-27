@@ -1,0 +1,51 @@
+# Credentials and secrets
+credentials.json
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.env
+
+# Build artifacts
+dist/
+build/
+installer_output/
+*.exe
+*.spec
+
+# Database files (user data)
+*.db
+data/tennis_betting.db
+
+# Large historical data (download from tennisdata repo if needed)
+data/tennis_atp/
+data/tennis_wta/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
+*.temp
+
+# Keep these tracked
+!Assets/*.ico
+!data/name_mappings.json

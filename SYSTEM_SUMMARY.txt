@@ -1,0 +1,136 @@
+TENNIS BETTING SYSTEM - SUMMARY FOR DEVELOPERS
+===============================================
+
+Version: 1.4.6
+Last Updated: January 26, 2026
+
+
+WHAT IT IS
+----------
+A desktop application for tennis betting analysis that calculates win
+probabilities using an 8-factor model, identifies value bets on Betfair
+Exchange, and tracks performance.
+
+
+TECHNOLOGY STACK
+----------------
+Language:       Python 3.11
+GUI:            Tkinter (native Python)
+Database:       SQLite (single portable file)
+Packaging:      PyInstaller -> Windows .exe
+Installer:      Inno Setup 6
+APIs:           Betfair Exchange, The Odds API (Pinnacle)
+
+
+HOW IT WORKS
+------------
+BETFAIR API          ->  Live odds for upcoming matches
+        |
+NAME MATCHER         ->  Maps "Roger Federer" to player ID in database
+        |
+8-FACTOR ANALYZER    ->  Calculates win probability
+        |
+VALUE DETECTION      ->  Compares our probability vs market odds
+        |
+MODEL FILTER         ->  Only accepts bets meeting M3/M4/M7/M8 criteria
+        |
+KELLY STAKING        ->  Calculates optimal stake (0.5u - 3.0u)
+        |
+BET TRACKER          ->  Tracks results, P/L, ROI by model
+
+
+THE PROBABILITY MODEL (8 FACTORS)
+---------------------------------
+Factor          Weight    What It Measures
+------          ------    ----------------
+Form            25%       Last 10 match results with recency decay
+Surface         20%       Win rate on Hard/Clay/Grass
+Ranking         20%       ATP/WTA ranking comparison
+Fatigue         15%       Days since last match, recent workload
+Recent Loss     8%        Penalty for coming off a loss
+H2H             5%        Head-to-head record
+Injury          5%        Current injury status
+Momentum        2%        Recent surface-specific wins
+
+Calibration: Raw probability is shrunk 50% toward market odds to reduce overconfidence.
+
+
+BETTING MODELS (FILTERS)
+------------------------
+Model    Criteria                        Purpose
+-----    --------                        -------
+M3       5-15% edge                      Moderate, realistic edges
+M4       Probability >= 60%              High confidence favorites
+M7       3-8% edge + odds < 2.50         Grind on short odds
+M8       Prob >= 55% + odds < 2.50       Historically profitable segment
+
+Bets not qualifying for any model are automatically rejected.
+
+
+DATABASE
+--------
+Players:             3,090 ranked players
+Historical Matches:  27,356 matches
+Tables:              14 total
+Format:              SQLite (single .db file)
+
+
+CURRENT LIMITATIONS (WHY REBUILD?)
+----------------------------------
+Issue               Impact
+-----               ------
+Tkinter GUI         Dated look, limited styling, no modern components
+Single-threaded     UI freezes during API calls
+No visualizations   Stats are text-only, no charts/graphs
+Desktop only        No mobile or web access
+Manual refresh      No real-time odds updates
+
+
+FOR A MODERN REBUILD
+--------------------
+Core Logic to Preserve (the IP):
+- match_analyzer.py   - 8-factor probability calculation
+- config.py           - Model criteria, factor weights
+- betfair_capture.py  - Betfair API integration
+- name_matcher.py     - Fuzzy name matching
+
+Recommended Stack Options:
+
+Approach          Technologies                  Best For
+--------          ------------                  --------
+C# Desktop        WPF or WinUI 3 + VS          Native Windows, MVVM, modern UI
+Python Desktop    PyQt6 or PySide6             Cross-platform, better than Tkinter
+Web App           React + FastAPI + PostgreSQL  Access anywhere, real-time, charts
+Hybrid            Electron + React              Desktop app with web tech
+
+
+FILE STRUCTURE
+--------------
+src/                          # 34 Python modules
+  main.py                     # Entry point
+  config.py                   # Settings, weights, model criteria
+  database.py                 # SQLite operations
+  match_analyzer.py           # 8-factor probability model
+  bet_suggester.py            # Value detection, Kelly staking
+  bet_tracker.py              # P/L tracking, statistics
+  betfair_capture.py          # Betfair API
+  betfair_tennis.py           # Betfair tennis-specific
+  name_matcher.py             # Fuzzy name matching
+  ... (25 more modules)
+
+data/
+  tennis_betting.db           # SQLite database
+
+installer_output/
+  TennisBettingSystem_Setup_1.4.6.exe
+
+
+CURRENT STATS
+-------------
+Version:          1.4.6
+Pending Bets:     58
+Expected Profit:  +13.18u (+22% ROI) based on model
+Actual Performance: TBD (need 100+ settled bets per model)
+
+
+Full technical documentation available in SYSTEM_OVERVIEW.md

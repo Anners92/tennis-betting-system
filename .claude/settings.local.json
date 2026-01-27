@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\\\Users\\\\marca\\\\OneDrive\\\\Documents\\\\claude-playground\\\\tennis betting\")",
+      "Bash(copy \"C:\\\\Users\\\\marca\\\\OneDrive\\\\Documents\\\\claude-playground\\\\tennis betting\\\\src\\\\config.py\" \"C:\\\\Users\\\\marca\\\\OneDrive\\\\Documents\\\\claude-playground\\\\tennis betting\\\\dist\\\\TennisBettingSystem\\\\config.py\")",
+      "Bash(copy:*)",
+      "Bash(python src/main.py:*)",
+      "Bash(\"C:\\\\Program Files \\(x86\\)\\\\Inno Setup 6\\\\ISCC.exe\" \"C:\\\\Users\\\\marca\\\\OneDrive\\\\Documents\\\\claude-playground\\\\tennis betting\\\\installer.iss\")",
+      "Bash(dir \"C:\\\\Users\\\\marca\\\\OneDrive\\\\Documents\\\\claude-playground\\\\tennis betting\\\\installer_output\")",
+      "Bash(dir \"C:\\\\Users\\\\marca\\\\OneDrive\\\\Documents\\\\claude-playground\\\\tennis betting\" /B)",
+      "Bash(dir \"C:\\\\Users\\\\marca\\\\OneDrive\\\\Documents\\\\claude-playground\" /B)",
+      "Bash(python src/launcher.py:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

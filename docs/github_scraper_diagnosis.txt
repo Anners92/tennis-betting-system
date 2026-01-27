@@ -1,0 +1,357 @@
+================================================================================
+GITHUB SCRAPER DIAGNOSIS - State Machine Analysis
+================================================================================
+Generated: January 20, 2026
+
+================================================================================
+PROBLEM STATEMENT
+================================================================================
+
+Manual Import (te_import_dialog.py) → WORKS
+GitHub Scraper (github_data_loader.py) → FAILS
+
+This document diagnoses why and what needs to be fixed.
+
+================================================================================
+1. COMPARISON OF THE TWO FLOWS
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         MANUAL IMPORT FLOW (WORKS)                          │
+│                         te_import_dialog.py                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   User Input                                                                │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌───────────────┐                                                         │
+│   │ Enter Player  │  Example: "Sinner" or full URL                         │
+│   │ Name/URL      │                                                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ Construct URL │  /player/sinner-jannik/?annual=2026                    │
+│   │ for PLAYER    │                                                         │
+│   │ PAGE          │  ◄── SCRAPES PLAYER'S MATCH HISTORY                    │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ Parse HTML    │  Finds matches where this player participated          │
+│   │ - Tournament  │  - Date, opponent, score, round all present            │
+│   │ - Date        │  - Opponent name is explicit                           │
+│   │ - Opponent    │  - Clear winner/loser (based on score)                 │
+│   │ - Score       │                                                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ Preview in UI │  User sees matches, can verify                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ Click Import  │                                                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ INSERT INTO   │  ◄── FIXED: Uses tourney_name (not tournament)         │
+│   │ matches       │                                                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│       SUCCESS ✓                                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        GITHUB SCRAPER FLOW (FAILS)                          │
+│                        github_data_loader.py                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Click "Quick Refresh"                                                     │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌───────────────┐                                                         │
+│   │ Load          │                                                         │
+│   │ PlayerName    │                                                         │
+│   │ Matcher       │                                                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ Call          │                                                         │
+│   │ fetch_recent  │                                                         │
+│   │ _results()    │                                                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ Construct URL │  /results/?type=atp-single&year=2026&month=01          │
+│   │ for RESULTS   │                                                         │
+│   │ PAGE          │  ◄── SCRAPES ALL MATCHES FOR A MONTH                   │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────────────────────────────────────────────────────┐        │
+│   │                    POTENTIAL ISSUE #1                          │        │
+│   │                    HTML Parsing Differences                    │        │
+│   │                                                                │        │
+│   │   Results pages have DIFFERENT HTML structure than             │        │
+│   │   player pages:                                                │        │
+│   │                                                                │        │
+│   │   Player Page:    [Date] [Tournament] [Opponent] [Score]       │        │
+│   │   Results Page:   [Date] [Player1] - [Player2] [Score]         │        │
+│   │                                                                │        │
+│   │   The parser may not extract winner_name/loser_name correctly  │        │
+│   └───────────────────────────────────────────────────────────────┘        │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────────────────────────────────────────────────────┐        │
+│   │                    POTENTIAL ISSUE #2                          │        │
+│   │                    Empty Match List                            │        │
+│   │                                                                │        │
+│   │   If parsing fails, all_matches = []                           │        │
+│   │   Result: "No matches found to import"                         │        │
+│   └───────────────────────────────────────────────────────────────┘        │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │ For Each      │                                                         │
+│   │ Match         │                                                         │
+│   └───────┬───────┘                                                         │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────────────────────────────────────────────────────┐        │
+│   │                    POTENTIAL ISSUE #3                          │        │
+│   │                    Player Name Mismatch                        │        │
+│   │                                                                │        │
+│   │   Results page uses full names like "Jannik Sinner"            │        │
+│   │   Database has "Sinner Jannik" (LastName FirstName)            │        │
+│   │                                                                │        │
+│   │   name_matcher.find_player_id() may fail                       │        │
+│   │   Result: All matches skipped!                                 │        │
+│   └───────────────────────────────────────────────────────────────┘        │
+│           │                                                                 │
+│           ▼                                                                 │
+│   ┌───────────────────────────────────────────────────────────────┐        │
+│   │                 *** CONFIRMED BUG #1 ***                       │        │
+│   │                 Wrong Column Name                              │        │
+│   │                                                                │        │
+│   │   Line 163-164 in github_data_loader.py:                       │        │
+│   │                                                                │        │
+│   │   INSERT INTO matches                                          │        │
+│   │   (id, tournament, tourney_name, date, ...)                    │        │
+│   │        ^^^^^^^^^^                                              │        │
+│   │        COLUMN DOES NOT EXIST!                                  │        │
+│   │                                                                │        │
+│   │   Table only has: tourney_name (not tournament)                │        │
+│   │                                                                │        │
+│   │   Result: SQLite error, matches not inserted                   │        │
+│   └───────────────────────────────────────────────────────────────┘        │
+│           │                                                                 │
+│           ▼                                                                 │
+│       FAILURE ✗                                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+2. CONFIRMED BUGS TO FIX
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  BUG #1: WRONG COLUMN NAME IN INSERT STATEMENT                              │
+│  File: github_data_loader.py                                                │
+│  Line: 161-177                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  CURRENT CODE (BROKEN):                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ cursor.execute('''                                                   │   │
+│  │     INSERT OR IGNORE INTO matches                                    │   │
+│  │     (id, tournament, tourney_name, date, surface, winner_id, ...)   │   │
+│  │          ^^^^^^^^^^                                                  │   │
+│  │          THIS COLUMN DOESN'T EXIST IN THE TABLE!                    │   │
+│  │ ''', (...))                                                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  FIX:                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ cursor.execute('''                                                   │   │
+│  │     INSERT OR IGNORE INTO matches                                    │   │
+│  │     (id, tourney_name, date, surface, winner_id, loser_id,          │   │
+│  │      winner_name, loser_name, score)                                 │   │
+│  │     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)                               │   │
+│  │ ''', (                                                               │   │
+│  │     match_id,                                                        │   │
+│  │     match.get('tournament', ''),                                     │   │
+│  │     match.get('date', ''),                                           │   │
+│  │     match.get('surface', 'Hard'),                                    │   │
+│  │     winner_id,                                                       │   │
+│  │     loser_id,                                                        │   │
+│  │     canonical_winner,                                                │   │
+│  │     canonical_loser,                                                 │   │
+│  │     match.get('score', '')                                           │   │
+│  │ ))                                                                   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  STATUS: NEEDS FIX                                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+3. POTENTIAL ISSUES TO INVESTIGATE
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ISSUE #2: HTML PARSING - RESULTS PAGE VS PLAYER PAGE                       │
+│  File: tennis_explorer_scraper.py                                           │
+│  Method: _parse_results_page() vs te_import_dialog._scrape_url()            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  NEEDS INVESTIGATION:                                                       │
+│                                                                             │
+│  1. What does the results page HTML actually look like?                     │
+│     URL: https://www.tennisexplorer.com/results/?type=atp-single&...       │
+│                                                                             │
+│  2. Does _parse_results_page() correctly extract:                           │
+│     - winner_name                                                           │
+│     - loser_name                                                            │
+│     - score                                                                 │
+│     - date                                                                  │
+│     - tournament                                                            │
+│                                                                             │
+│  TEST: Add debug logging to see what matches are being parsed               │
+│                                                                             │
+│  STATUS: INVESTIGATE AFTER BUG #1 FIX                                       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ISSUE #3: PLAYER NAME MATCHING                                             │
+│  File: github_data_loader.py                                                │
+│  Lines: 145-151                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  CONCERN:                                                                   │
+│                                                                             │
+│  Results page shows: "Jannik Sinner" (FirstName LastName)                  │
+│  Database has:       "Sinner Jannik" (LastName FirstName)                  │
+│                                                                             │
+│  The PlayerNameMatcher should handle this, but verify:                      │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ winner_id = name_matcher.find_player_id(winner_name)                │   │
+│  │ loser_id = name_matcher.find_player_id(loser_name)                  │   │
+│  │                                                                      │   │
+│  │ if not winner_id or not loser_id:                                   │   │
+│  │     skipped += 1    ◄── This may be skipping ALL matches!           │   │
+│  │     continue                                                         │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  TEST: Add debug logging to see match rate                                  │
+│                                                                             │
+│  STATUS: INVESTIGATE AFTER BUG #1 FIX                                       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ISSUE #4: DELETE FROM MATCHES (DESTRUCTIVE!)                               │
+│  File: github_data_loader.py                                                │
+│  Line: 131                                                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  WARNING:                                                                   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ # Clear existing matches                                             │   │
+│  │ cursor.execute("DELETE FROM matches")  ◄── DELETES ALL MATCHES!     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  If the scraper fails AFTER this line, all matches are lost!               │
+│                                                                             │
+│  RECOMMENDATION:                                                            │
+│  - Don't delete existing matches                                            │
+│  - Use INSERT OR IGNORE to add only new matches                             │
+│  - Or: Only delete matches if new ones were successfully scraped            │
+│                                                                             │
+│  STATUS: DESIGN DECISION NEEDED                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+4. FIX IMPLEMENTATION STEPS
+================================================================================
+
+    ┌─────────────────┐
+    │ STEP 1          │
+    │ Fix Bug #1      │
+    │ (Column Name)   │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ STEP 2          │
+    │ Copy to dist/   │
+    │ and rebuild     │
+    │ installer       │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ STEP 3          │
+    │ Test with       │
+    │ debug logging   │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ STEP 4          │──► If matches=0: Investigate Issue #2 (HTML parsing)
+    │ Check results   │──► If skipped=high: Investigate Issue #3 (name matching)
+    │                 │──► If works: Done!
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ STEP 5          │
+    │ (Optional)      │
+    │ Remove DELETE   │
+    │ statement       │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ DONE            │
+    └─────────────────┘
+
+
+================================================================================
+5. QUICK FIX COMMAND
+================================================================================
+
+After fixing github_data_loader.py, apply to installed app:
+
+PowerShell (as Admin):
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Copy-Item "C:\Users\marca\OneDrive\Documents\claude-playground\tennis       │
+│ betting\src\github_data_loader.py" "C:\Program Files (x86)\Tennis Betting  │
+│ System\" -Force                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Or rebuild installer:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ cd "C:\Users\marca\OneDrive\Documents\claude-playground\tennis betting"     │
+│ copy src\github_data_loader.py dist\TennisBettingSystem\                    │
+│ "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+END OF DIAGNOSIS
+================================================================================

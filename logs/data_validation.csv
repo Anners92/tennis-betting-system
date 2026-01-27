@@ -1,0 +1,220 @@
+timestamp,source,rule_violated,severity,winner_id,loser_id,winner_name,loser_name,date,tournament,details
+2026-01-19T18:05:48.140182,tennis_explorer,future_date,CRITICAL,-998197689,506106208,Schwartzman,Thiago Monteiro,2026-04-07,Itajai challenger,Date 2026-04-07 is more than 7 days in future
+2026-01-19T18:05:48.140182,tennis_explorer,future_date,CRITICAL,-998197689,506106208,Schwartzman,Thiago Monteiro,2026-04-07,Itajai challenger,Date 2026-04-07 is more than 7 days in future
+2026-01-19T18:33:52.223147,atp_github,invalid_score_format,WARNING,117361,126174,,,2019-04-29,Seoul CH,Score: Def.
+2026-01-19T18:33:52.225149,atp_github,invalid_score_format,WARNING,117365,132052,,,2019-09-09,Cary CH,Score: >
+2026-01-19T18:33:52.637524,atp_github,invalid_score_format,WARNING,122638,126409,,,2019-01-21,M15 Veigy Foncenex,Score: 2-0 DEF
+2026-01-19T18:33:52.726605,atp_github,invalid_score_format,WARNING,200228,105626,,,2019-05-06,M25 Pensacola FL,Score: &nbsp;
+2026-01-19T18:33:53.022875,atp_github,invalid_score_format,WARNING,106059,109732,,,2019-04-22,M15 Bucaramanga,Score: &nbsp;
+2026-01-19T18:33:53.277106,atp_github,invalid_score_format,WARNING,207389,132965,,,2019-09-16,M15 Targu Mures,Score: 6-0 DEF
+2026-01-19T18:33:53.322147,atp_github,invalid_score_format,WARNING,133603,122538,,,2019-10-21,M15 Tabarka,Score: &nbsp;
+2026-01-19T18:33:53.322147,atp_github,invalid_score_format,WARNING,207535,123855,,,2019-10-21,M15 Tabarka,Score: &nbsp;
+2026-01-19T18:33:53.322147,atp_github,invalid_score_format,WARNING,207660,208363,,,2019-10-21,M15 Tabarka,Score: &nbsp;
+2026-01-19T18:33:53.323148,atp_github,invalid_score_format,WARNING,133603,122058,,,2019-10-21,M15 Tabarka,Score: &nbsp;
+2026-01-19T18:33:53.535341,atp_github,invalid_score_format,WARNING,105807,104925,,,2020-08-31,Us Open,Score: 6-5 DEF
+2026-01-19T18:33:53.908681,atp_github,invalid_score_format,WARNING,202127,208021,,,2020-02-10,M15 Grenoble,Score: 7-6(9) DEF
+2026-01-19T18:33:53.913686,atp_github,invalid_score_format,WARNING,200532,209894,,,2020-03-09,M15 Heraklion,Score: 2-0 DEF
+2026-01-19T18:33:54.036798,atp_github,invalid_score_format,WARNING,200096,126328,,,2020-11-30,M15 Antalya,Score: 1-1 DEF
+2026-01-19T18:33:54.415143,atp_github,invalid_score_format,WARNING,122298,106000,,,2021-03-15,Acapulco,Score: 6-5 Def.
+2026-01-19T18:33:54.620330,atp_github,invalid_score_format,WARNING,111153,105815,,,2021-09-13,Cary 2 CH,Score: 0-1 Def.
+2026-01-19T18:33:55.366689,atp_github,invalid_score_format,WARNING,126152,210034,,,2021-09-27,M15 Lubbock TX,Score: DEF
+2026-01-19T18:33:57.098741,atp_github,invalid_score_format,WARNING,200014,202147,,,2022-10-31,M15 New Delhi,Score: 6-2
+2026-01-19T18:33:57.211844,atp_github,invalid_score_format,WARNING,210289,144748,,,2022-10-10,M15 Maputo,Score: 7-6(1) DEF
+2026-01-19T18:33:57.716303,atp_github,invalid_score_format,WARNING,209950,144707,,,2023-05-22,Lyon,Score: 6-5 Def.
+2026-01-19T18:33:57.772354,atp_github,missing_surface,WARNING,207799,144751,,,2023-02-03,Davis Cup WG1 PO: BRA vs CHN,
+2026-01-19T18:33:57.773355,atp_github,missing_surface,WARNING,106329,200666,,,2023-02-03,Davis Cup WG1 PO: BRA vs CHN,
+2026-01-19T18:33:57.773355,atp_github,missing_surface,WARNING,208361,144751,,,2023-02-03,Davis Cup WG1 PO: BRA vs CHN,
+2026-01-19T18:33:57.773355,atp_github,missing_surface,WARNING,209866,122548,,,2023-02-04,Davis Cup WG1 PO: ISR vs LAT,
+2026-01-19T18:33:57.774356,atp_github,missing_surface,WARNING,105208,131951,,,2023-02-04,Davis Cup WG1 PO: ISR vs LAT,
+2026-01-19T18:33:57.774356,atp_github,missing_surface,WARNING,200075,207669,,,2023-02-04,Davis Cup WG1 PO: ISR vs LAT,
+2026-01-19T18:33:57.775357,atp_github,missing_surface,WARNING,131951,209866,,,2023-02-04,Davis Cup WG1 PO: ISR vs LAT,
+2026-01-19T18:33:57.775357,atp_github,missing_surface,WARNING,105575,207841,,,2023-02-03,Davis Cup WG1 PO: PAK vs LTU,
+2026-01-19T18:33:57.775357,atp_github,missing_surface,WARNING,210220,103499,,,2023-02-03,Davis Cup WG1 PO: PAK vs LTU,
+2026-01-19T18:33:57.776357,atp_github,missing_surface,WARNING,209147,108782,,,2023-02-03,Davis Cup WG1 PO: PAK vs LTU,
+2026-01-19T18:33:57.776357,atp_github,missing_surface,WARNING,208293,200278,,,2023-02-03,Davis Cup WG1 PO: PER vs IRL,
+2026-01-19T18:33:57.776357,atp_github,missing_surface,WARNING,207736,200279,,,2023-02-03,Davis Cup WG1 PO: PER vs IRL,
+2026-01-19T18:33:57.776357,atp_github,missing_surface,WARNING,138485,210686,,,2023-02-03,Davis Cup WG1 PO: PER vs IRL,
+2026-01-19T18:33:57.777358,atp_github,missing_surface,WARNING,207772,207660,,,2023-02-03,Davis Cup WG1 PO: ROU vs THA,
+2026-01-19T18:33:57.777358,atp_github,missing_surface,WARNING,202262,208937,,,2023-02-03,Davis Cup WG1 PO: ROU vs THA,
+2026-01-19T18:33:57.777358,atp_github,missing_surface,WARNING,207660,208937,,,2023-02-03,Davis Cup WG1 PO: ROU vs THA,
+2026-01-19T18:33:57.778359,atp_github,missing_surface,WARNING,202262,207772,,,2023-02-03,Davis Cup WG1 PO: ROU vs THA,
+2026-01-19T18:33:57.778359,atp_github,missing_surface,WARNING,123795,210274,,,2023-02-03,Davis Cup WG1 PO: TUR vs SLO,
+2026-01-19T18:33:57.778359,atp_github,missing_surface,WARNING,117356,210107,,,2023-02-03,Davis Cup WG1 PO: TUR vs SLO,
+2026-01-19T18:33:57.779360,atp_github,missing_surface,WARNING,144985,210753,,,2023-02-03,Davis Cup WG1 PO: TUR vs SLO,
+2026-01-19T18:33:57.779360,atp_github,missing_surface,WARNING,200550,200273,,,2023-02-03,Davis Cup WG1 PO: UKR vs LBN,
+2026-01-19T18:33:57.779360,atp_github,missing_surface,WARNING,209907,133975,,,2023-02-03,Davis Cup WG1 PO: UKR vs LBN,
+2026-01-19T18:33:57.780361,atp_github,missing_surface,WARNING,133975,209191,,,2023-02-03,Davis Cup WG1 PO: UKR vs LBN,
+2026-01-19T18:33:57.780361,atp_github,missing_surface,WARNING,105985,210680,,,2023-02-03,Davis Cup WG2 PO: BAR vs POC,
+2026-01-19T18:33:57.781362,atp_github,missing_surface,WARNING,124040,209868,,,2023-02-03,Davis Cup WG2 PO: BAR vs POC,
+2026-01-19T18:33:57.781362,atp_github,missing_surface,WARNING,105985,124040,,,2023-02-03,Davis Cup WG2 PO: BAR vs POC,
+2026-01-19T18:33:57.781362,atp_github,missing_surface,WARNING,209868,210680,,,2023-02-03,Davis Cup WG2 PO: BAR vs POC,
+2026-01-19T18:33:57.781362,atp_github,missing_surface,WARNING,126762,210178,,,2023-02-02,Davis Cup WG2 PO: BOL vs GEO,
+2026-01-19T18:33:57.782363,atp_github,missing_surface,WARNING,206600,207881,,,2023-02-02,Davis Cup WG2 PO: BOL vs GEO,
+2026-01-19T18:33:57.782363,atp_github,missing_surface,WARNING,208182,210178,,,2023-02-02,Davis Cup WG2 PO: BOL vs GEO,
+2026-01-19T18:33:57.782363,atp_github,missing_surface,WARNING,209871,200622,,,2023-02-03,Davis Cup WG2 PO: EGY vs PAR,
+2026-01-19T18:33:57.782363,atp_github,missing_surface,WARNING,118808,105633,,,2023-02-03,Davis Cup WG2 PO: EGY vs PAR,
+2026-01-19T18:33:57.783364,atp_github,missing_surface,WARNING,118808,209871,,,2023-02-03,Davis Cup WG2 PO: EGY vs PAR,
+2026-01-19T18:33:57.783364,atp_github,missing_surface,WARNING,105633,134677,,,2023-02-03,Davis Cup WG2 PO: EGY vs PAR,
+2026-01-19T18:33:57.783364,atp_github,missing_surface,WARNING,105656,212038,,,2023-02-03,Davis Cup WG2 PO: ESA vs JOR,
+2026-01-19T18:33:57.784365,atp_github,missing_surface,WARNING,207461,209294,,,2023-02-03,Davis Cup WG2 PO: ESA vs JOR,
+2026-01-19T18:33:57.784365,atp_github,missing_surface,WARNING,105656,207461,,,2023-02-03,Davis Cup WG2 PO: ESA vs JOR,
+2026-01-19T18:33:57.784365,atp_github,missing_surface,WARNING,202120,144932,,,2023-02-04,Davis Cup WG2 PO: EST vs JAM,
+2026-01-19T18:33:57.784365,atp_github,missing_surface,WARNING,209080,144807,,,2023-02-04,Davis Cup WG2 PO: EST vs JAM,
+2026-01-19T18:33:57.785366,atp_github,invalid_score_format,WARNING,209080,144932,,,2023-02-04,Davis Cup WG2 PO: EST vs JAM,Score: 7-6(7) DEF
+2026-01-19T18:33:57.785366,atp_github,missing_surface,WARNING,209080,144932,,,2023-02-04,Davis Cup WG2 PO: EST vs JAM,
+2026-01-19T18:33:57.785366,atp_github,missing_surface,WARNING,200575,212041,,,2023-02-04,Davis Cup WG2 PO: EST vs JAM,
+2026-01-19T18:33:57.785366,atp_github,missing_surface,WARNING,207134,123969,,,2023-02-04,Davis Cup WG2 PO: INA vs VIE,
+2026-01-19T18:33:57.786367,atp_github,missing_surface,WARNING,122533,200045,,,2023-02-04,Davis Cup WG2 PO: INA vs VIE,
+2026-01-19T18:33:57.786367,atp_github,missing_surface,WARNING,122533,207134,,,2023-02-04,Davis Cup WG2 PO: INA vs VIE,
+2026-01-19T18:33:57.786367,atp_github,missing_surface,WARNING,105464,202316,,,2023-02-04,Davis Cup WG2 PO: INA vs VIE,
+2026-01-19T18:33:57.786367,atp_github,missing_surface,WARNING,200270,209278,,,2023-02-04,Davis Cup WG2 PO: RSA vs LUX,
+2026-01-19T18:33:57.787368,atp_github,missing_surface,WARNING,208210,144748,,,2023-02-04,Davis Cup WG2 PO: RSA vs LUX,
+2026-01-19T18:33:57.787368,atp_github,missing_surface,WARNING,200270,144748,,,2023-02-04,Davis Cup WG2 PO: RSA vs LUX,
+2026-01-19T18:33:57.787368,atp_github,missing_surface,WARNING,202335,209280,,,2023-02-04,Davis Cup WG2 PO: RSA vs LUX,
+2026-01-19T18:33:57.788369,atp_github,missing_surface,WARNING,117365,109734,,,2023-02-03,Davis Cup WG2 PO: TUN vs CYP,
+2026-01-19T18:33:57.788369,atp_github,missing_surface,WARNING,121411,144949,,,2023-02-03,Davis Cup WG2 PO: TUN vs CYP,
+2026-01-19T18:33:57.788369,atp_github,missing_surface,WARNING,144949,144826,,,2023-02-03,Davis Cup WG2 PO: TUN vs CYP,
+2026-01-19T18:33:57.789370,atp_github,missing_surface,WARNING,121411,117365,,,2023-02-03,Davis Cup WG2 PO: TUN vs CYP,
+2026-01-19T18:33:58.090644,atp_github,invalid_score_format,WARNING,106064,209120,,,2023-11-13,Champaign CH,Score: Def.
+2026-01-19T18:33:59.146065,atp_github,invalid_score_format,WARNING,202197,202209,,,2023-08-28,M25 Oviedo,Score: 5-6 DEF
+2026-01-19T18:33:59.249158,atp_github,invalid_score_format,WARNING,202398,208178,,,2023-10-09,M25 Telavi,Score: 5-3 DEF
+2026-01-19T18:33:59.542426,atp_github,invalid_score_format,WARNING,200014,122113,,,2023-07-10,M15 Nakhon Si Thammarat,Score: 6-4 DEF
+2026-01-19T18:33:59.774637,atp_github,invalid_score_format,WARNING,212293,207729,,,2023-07-03,M15 Lakewood,Score: 6-4
+2026-01-19T18:34:01.226960,atp_github,invalid_score_format,WARNING,134794,200374,,,2024-11-11,Lyon 2 CH,Score: 3-2 Def.
+2026-01-19T18:34:01.577279,atp_github,invalid_score_format,WARNING,212760,211695,,,2024-05-06,M25 Trelew,Score: 4-1 DEF
+2026-01-19T18:34:02.487118,atp_github,invalid_score_format,WARNING,212900,209360,,,2024-05-13,M15 Monastir,Score: DEF
+2026-01-19T19:36:05.083650,wta_github,winner_equals_loser,CRITICAL,-221862,-221862,,,2019-02-11,W15 Port Pirie,Both IDs are -221862
+2026-01-19T19:36:05.112676,wta_github,invalid_score_format,WARNING,-213584,-211856,,,2019-06-10,W25 Minsk,Score: &nbsp;
+2026-01-19T19:36:05.183741,wta_github,invalid_score_format,WARNING,-222002,-214140,,,2019-04-22,W15 Bucaramanga,Score: BYE
+2026-01-19T19:36:05.245796,wta_github,invalid_score_format,WARNING,-201659,-214191,,,2019-04-22,W15 Cairo,Score: DEF
+2026-01-19T19:36:05.252803,wta_github,invalid_score_format,WARNING,-222829,-215966,,,2019-11-11,W15 Sharm El Sheikh,Score: &nbsp;
+2026-01-19T19:36:05.573095,wta_github,invalid_score_format,WARNING,-221043,-215879,,,2019-08-26,W25 Almaty,Score: &nbsp;
+2026-01-19T19:36:05.642157,wta_github,invalid_score_format,WARNING,-221688,-222091,,,2019-08-12,W15 Cancun,Score: BYE
+2026-01-19T19:36:05.642157,wta_github,invalid_score_format,WARNING,-222486,-216219,,,2019-08-12,W15 Cancun,Score: BYE
+2026-01-19T19:36:05.643159,wta_github,invalid_score_format,WARNING,-221838,-222261,,,2019-08-12,W15 Cancun,Score: BYE
+2026-01-19T19:36:05.646161,wta_github,invalid_score_format,WARNING,-220697,-210871,,,2019-11-04,W15 Cancun,Score: BYE
+2026-01-19T19:36:05.646161,wta_github,invalid_score_format,WARNING,-220578,-222048,,,2019-11-04,W15 Cancun,Score: BYE
+2026-01-19T19:36:05.647163,wta_github,invalid_score_format,WARNING,-202231,-215829,,,2019-11-04,W15 Cancun,Score: BYE
+2026-01-19T19:36:05.767272,wta_github,invalid_score_format,WARNING,-216385,-221247,,,2019-05-06,W15 Gothenburg,Score: 6-4 DEF
+2026-01-19T19:36:05.887381,wta_github,invalid_score_format,WARNING,-215956,-220364,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.888383,wta_github,invalid_score_format,WARNING,-202387,-211351,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.888383,wta_github,invalid_score_format,WARNING,-211285,-202691,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.889383,wta_github,invalid_score_format,WARNING,-216243,-206336,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.889383,wta_github,invalid_score_format,WARNING,-215553,-211323,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.890386,wta_github,invalid_score_format,WARNING,-214505,-220276,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.890386,wta_github,invalid_score_format,WARNING,-215144,-202387,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.890386,wta_github,invalid_score_format,WARNING,-214992,-211898,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.891395,wta_github,invalid_score_format,WARNING,-215553,-214505,,,2019-01-28,W15 Antalya,Score: &nbsp;
+2026-01-19T19:36:05.928418,wta_github,invalid_score_format,WARNING,-206102,-201666,,,2019-04-08,W60 Istanbul,Score: &nbsp;
+2026-01-19T19:36:06.088567,wta_github,invalid_score_format,WARNING,-210146,-221162,,,2019-10-07,W25 Claremont CA,Score: DEF
+2026-01-19T19:36:06.144615,wta_github,invalid_score_format,WARNING,-201534,-206252,,,2019-08-26,Us Open,Score: 1-0 RE
+2026-01-19T19:36:06.482931,wta_github,invalid_score_format,WARNING,-216252,-215372,,,2020-11-16,W15 Sharm El Sheikh,Score: 4-5 DEF
+2026-01-19T19:36:06.724143,wta_github,invalid_score_format,WARNING,-220770,-220140,,,2020-02-24,W25 Sunderland,Score: DEF
+2026-01-19T19:36:06.728147,wta_github,invalid_score_format,WARNING,-213657,-222395,,,2020-11-02,W15 Heraklion,Score: 7-5 DEF
+2026-01-19T19:36:08.343618,wta_github,invalid_score_format,WARNING,-223000,-239168,,,2021-11-29,W15 Heraklion,Score: DEF
+2026-01-19T19:36:09.473648,wta_github,invalid_score_format,WARNING,-220732,-213972,,,2022-05-23,W15 Oran,Score: 7-6(4)
+2026-01-19T19:36:09.933066,wta_github,invalid_score_format,WARNING,-246481,-215459,,,2022-02-28,W15 Nagpur,Score: 6-5
+2026-01-19T19:36:09.995123,wta_github,invalid_score_format,WARNING,-214975,-213889,,,2022-02-21,W60 Nur-Sultan,Score: 6-4
+2026-01-19T19:36:10.369464,wta_github,invalid_score_format,WARNING,-221187,-221045,,,2022-07-04,W15 Monastir,Score: DEF
+2026-01-19T19:36:10.419510,wta_github,invalid_score_format,WARNING,-215879,-211310,,,2022-01-17,W15 Antalya,Score: 6-2
+2026-01-19T19:36:10.721785,wta_github,invalid_score_format,WARNING,-222697,-214116,,,2022-05-09,W15 Cairo,Score: 5-0 DEF
+2026-01-19T19:36:10.960002,wta_github,invalid_score_format,WARNING,-223153,-259944,,,2022-04-18,W15 Shymkent,Score: DEF
+2026-01-19T19:36:11.872835,wta_github,invalid_score_format,WARNING,-203500,-203389,,,2023-09-18,Guadalajara,Score: 7-6(7)
+2026-01-19T19:36:13.337167,wta_github,invalid_score_format,WARNING,-239476,-223671,,,2023-11-27,W15 Antalya,Score: 1-May
+2026-01-19T19:36:13.769561,wta_github,invalid_score_format,WARNING,-222003,-222564,,,2023-07-17,W100 Vitoria-Gasteiz,Score: DEF
+2026-01-19T19:36:13.830617,wta_github,invalid_score_format,WARNING,-222275,-242451,,,2023-06-12,W15 Norges-la-Ville,Score: DEF
+2026-01-19T19:36:14.090854,wta_github,invalid_score_format,WARNING,-216405,-266396,,,2023-10-23,W25 Loule,Score: DEF
+2026-01-19T19:36:14.090854,wta_github,invalid_score_format,WARNING,-222620,-239420,,,2023-10-23,W25 Loule,Score: DEF
+2026-01-19T19:36:14.091855,wta_github,invalid_score_format,WARNING,-213721,-260750,,,2023-10-23,W25 Loule,Score: DEF
+2026-01-19T19:36:14.091855,wta_github,invalid_score_format,WARNING,-215013,-252507,,,2023-10-23,W25 Loule,Score: DEF
+2026-01-19T19:36:14.225977,wta_github,invalid_score_format,WARNING,-233723,-215092,,,2023-05-01,W15 Monastir,Score: DEF
+2026-01-19T19:36:14.771473,wta_github,missing_surface,WARNING,-216347,-215899,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.771473,wta_github,missing_surface,WARNING,-211684,-232447,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.772474,wta_github,missing_surface,WARNING,-201696,-206430,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.772474,wta_github,missing_surface,WARNING,-221054,-201614,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.772474,wta_github,missing_surface,WARNING,-201696,-206242,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.773475,wta_github,missing_surface,WARNING,-213583,-206007,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.773475,wta_github,missing_surface,WARNING,-216347,-232447,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.773475,wta_github,missing_surface,WARNING,-211107,-216262,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.774476,wta_github,missing_surface,WARNING,-221054,-220348,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.774476,wta_github,missing_surface,WARNING,-202536,-202494,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.774476,wta_github,missing_surface,WARNING,-211713,-201615,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.774476,wta_github,missing_surface,WARNING,-201613,-205892,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.775477,wta_github,missing_surface,WARNING,-201611,-204420,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.775477,wta_github,missing_surface,WARNING,-211702,-206363,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.775477,wta_github,missing_surface,WARNING,-211768,-201709,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.776478,wta_github,missing_surface,WARNING,-220348,-211107,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.776478,wta_github,missing_surface,WARNING,-203533,-223308,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.776478,wta_github,missing_surface,WARNING,-214149,-220662,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.776478,wta_github,missing_surface,WARNING,-201615,-202536,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.777478,wta_github,missing_surface,WARNING,-202494,-211713,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.777478,wta_github,missing_surface,WARNING,-202468,-223321,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.777478,wta_github,missing_surface,WARNING,-215613,-243420,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.777478,wta_github,missing_surface,WARNING,-223194,-204420,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.778479,wta_github,missing_surface,WARNING,-211702,-201709,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.778479,wta_github,missing_surface,WARNING,-260761,-220662,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.779480,wta_github,missing_surface,WARNING,-206242,-204431,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.779480,wta_github,missing_surface,WARNING,-202468,-243420,,,2024-04-12,BJK Cup Qualifiers,
+2026-01-19T19:36:14.779480,wta_github,missing_surface,WARNING,-202505,-236957,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.780481,wta_github,missing_surface,WARNING,-213887,-260672,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.780481,wta_github,missing_surface,WARNING,-220704,-205892,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.780481,wta_github,missing_surface,WARNING,-203530,-239392,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.780481,wta_github,missing_surface,WARNING,-201551,-214461,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.781482,wta_github,missing_surface,WARNING,-215480,-220662,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.781482,wta_github,missing_surface,WARNING,-221333,-206007,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.781482,wta_github,missing_surface,WARNING,-206242,-220446,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.781482,wta_github,missing_surface,WARNING,-201610,-220432,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.782483,wta_github,missing_surface,WARNING,-221096,-211260,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.782483,wta_github,missing_surface,WARNING,-213887,-220704,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.782483,wta_github,missing_surface,WARNING,-220662,-201551,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.783484,wta_github,missing_surface,WARNING,-214981,-216213,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.783484,wta_github,missing_surface,WARNING,-216016,-243420,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.783484,wta_github,missing_surface,WARNING,-215480,-214461,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.783484,wta_github,missing_surface,WARNING,-203530,-236957,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.784485,wta_github,missing_surface,WARNING,-260672,-205892,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.784485,wta_github,missing_surface,WARNING,-220348,-215306,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.784485,wta_github,missing_surface,WARNING,-206242,-221333,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.785487,wta_github,missing_surface,WARNING,-201615,-201481,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.785487,wta_github,missing_surface,WARNING,-215785,-216262,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.785487,wta_github,missing_surface,WARNING,-220446,-206007,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.785487,wta_github,missing_surface,WARNING,-221257,-215290,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.786488,wta_github,missing_surface,WARNING,-223321,-216016,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.786488,wta_github,missing_surface,WARNING,-243420,-221096,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.786488,wta_github,missing_surface,WARNING,-201709,-220454,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.787489,wta_github,missing_surface,WARNING,-215785,-219875,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.787489,wta_github,missing_surface,WARNING,-221257,-201615,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.787489,wta_github,missing_surface,WARNING,-216262,-215306,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:14.787489,wta_github,missing_surface,WARNING,-215290,-211814,,,2024-11-15,BJK Cup Playoffs,
+2026-01-19T19:36:15.431074,wta_github,invalid_score_format,WARNING,-211063,-211864,,,2024-09-23,W50 Pilar,Score: 6-2 DEF
+2026-01-19T19:36:15.853459,wta_github,invalid_score_format,WARNING,-221886,-214181,,,2024-11-25,W15 Sharm ElSheikh,Score: 3-1 DEF
+2026-01-19T19:36:16.980485,wta_github,invalid_score_format,WARNING,-260855,-259928,,,2024-08-19,W35 Saskatoon,Score: DEF
+2026-01-19T19:36:16.985490,wta_github,invalid_score_format,WARNING,-252491,-264093,,,2024-07-08,W35 Tianjin,Score: DEF
+2026-01-19T19:36:17.045544,wta_github,invalid_score_format,WARNING,-215131,-223087,,,2024-03-11,W35 Alaminos-Larnaca,Score: 5-2 DEF
+2026-01-19T19:36:17.280759,wta_github,invalid_score_format,WARNING,-264028,-253671,,,2024-05-20,W15 Estepona,Score: 2-5 DEF
+2026-01-19T19:36:17.452915,wta_github,invalid_score_format,WARNING,-265638,-260481,,,2024-09-02,W15 Dinard,Score: DEF
+2026-01-19T19:36:17.534991,wta_github,invalid_score_format,WARNING,-267638,-264091,,,2024-06-24,W15 Hong Kong,Score: DEF
+2026-01-19T19:36:17.596046,wta_github,invalid_score_format,WARNING,-220343,-241005,,,2024-09-23,W35 Santa Margherita di Pula,Score: DEF
+2026-01-19T19:36:17.868294,wta_github,winner_equals_loser,CRITICAL,-221371,-221371,,,2024-06-24,W15 Kursumlijska Banja,Both IDs are -221371
+2026-01-19T19:36:17.877302,wta_github,invalid_score_format,WARNING,-267845,-241735,,,2024-05-06,W35 Bastad,Score: 7-6(2) DEF
+2026-01-19T19:36:18.215610,wta_github,invalid_score_format,WARNING,-221067,-268808,,,2024-08-12,W15 Huntsville AL,Score: DEF
+2026-01-19T19:36:18.215610,wta_github,invalid_score_format,WARNING,-222265,-260295,,,2024-08-12,W15 Huntsville AL,Score: DEF
+2026-01-20T21:59:50.174858,tennis_explorer,invalid_score_format,WARNING,2456,568,Pablo Carreno-Busta,Cazaux A.,2026-01-04,Brisbane,Score: 5-3
+2026-01-20T21:59:50.179863,tennis_explorer,invalid_score_format,WARNING,2126,2133,Maxence Beauge,Maxime Janvier,2026-01-06,Futures 2026,Score: 7-66
+2026-01-20T21:59:50.180867,tennis_explorer,winner_equals_loser,CRITICAL,1,1,A. Stephens Sloane,A. Stephens Sloane,2026-01-06,Futures 2026,Both IDs are 1
+2026-01-20T21:59:50.183866,tennis_explorer,invalid_score_format,WARNING,2047,151,Marko Miladinovic,Ali Habib,2026-01-08,Futures 2026,Score: 2-2
+2026-01-20T21:59:50.185867,tennis_explorer,winner_equals_loser,CRITICAL,1028,1028,Felix Corwin,Felix Corwin,2026-01-09,UTR Pro Tennis Series 3,Both IDs are 1028
+2026-01-20T21:59:50.186868,tennis_explorer,invalid_score_format,WARNING,27,2982,Aguilar Cardozo J.,Thiago Cigarran,2026-01-11,Buenos Aires 3 challenger,Score: 7-3
+2026-01-20T21:59:50.187870,tennis_explorer,winner_equals_loser,CRITICAL,343,343,Arango E.,Arango E.,2026-01-11,Futures 2026,Both IDs are 343
+2026-01-20T21:59:50.189871,tennis_explorer,winner_equals_loser,CRITICAL,27,27,Aguilar Cardozo J.,Aguilar Cardozo J.,2026-01-12,Buenos Aires 3 challenger,Both IDs are 27
+2026-01-20T21:59:50.189871,tennis_explorer,invalid_score_format,WARNING,2569,820,Preston Brown,Diogo Marques,2026-01-12,Futures 2026,Score: 4-3
+2026-01-20T21:59:50.191874,tennis_explorer,invalid_score_format,WARNING,1296,2092,Hynek Barton,Mathys Erhard,2026-01-13,Glasgow challenger,Score: 7-2
+2026-01-20T21:59:50.192885,tennis_explorer,invalid_score_format,WARNING,1272,3178,Hiromi Abe,William Rejchtman Vinciguerra,2026-01-13,Futures 2026,Score: 3-0
+2026-01-20T21:59:50.194876,tennis_explorer,invalid_score_format,WARNING,2644,2281,Rio Noguchi,Nagal S.,2026-01-14,Nonthaburi 2 challenger,Score: 2-2
+2026-01-20T21:59:50.194876,tennis_explorer,invalid_score_format,WARNING,2463,2709,Pablo Varillas Juan,Sakamoto P.,2026-01-14,Buenos Aires 3 challenger,Score: 6-4
+2026-01-20T21:59:50.195878,tennis_explorer,invalid_score_format,WARNING,2361,2137,Niels McDonald,Maximilian Neuchrist,2026-01-14,Futures 2026,Score: 1-2
+2026-01-20T21:59:50.197879,tennis_explorer,invalid_score_format,WARNING,2593,605,Rafael Jodar,Chris Rodesch,2026-01-14,Australian Open,Score: 7-3
+2026-01-20T21:59:50.198880,tennis_explorer,invalid_score_format,WARNING,484,373,Braden Shick,Artnak B.,2026-01-15,Futures 2026,Score: 7-5
+2026-01-20T21:59:50.200881,tennis_explorer,invalid_score_format,WARNING,1637,2758,Kaylan Bigun,Saraiva Dos Santos P.,2026-01-16,Futures 2026,Score: 6-1
+2026-01-20T21:59:50.202883,tennis_explorer,winner_equals_loser,CRITICAL,1,1,A. Stephens Sloane,A. Stephens Sloane,2026-01-18,Futures 2026,Both IDs are 1
+2026-01-20T21:59:50.202883,tennis_explorer,invalid_score_format,WARNING,1,1,A. Stephens Sloane,A. Stephens Sloane,2026-01-18,Futures 2026,Score: 6-2
+2026-01-20T21:59:50.207888,tennis_explorer,winner_equals_loser,CRITICAL,343,343,Arango E.,Arango E.,2026-01-20,Futures 2026,Both IDs are 343

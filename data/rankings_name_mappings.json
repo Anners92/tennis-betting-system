@@ -1,0 +1,7 @@
+{
+  "_comment": "Maps database player names to Tennis Explorer rankings names",
+  "_instructions": "Add entries like: 'DB Name': 'Rankings Name'",
+  "mappings": {
+    "Matheus Pucinelli De Al": "Matheus Pucinelli De Almeida"
+  }
+}

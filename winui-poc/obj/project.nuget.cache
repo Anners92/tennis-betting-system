@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "dgSpecHash": "HNN3x5q+AzU=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\marca\\OneDrive\\Documents\\claude-playground\\tennis betting\\winui-poc\\TennisBettingWinUI.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.web.webview2\\1.0.2651.64\\microsoft.web.webview2.1.0.2651.64.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.windows.sdk.buildtools\\10.0.22621.756\\microsoft.windows.sdk.buildtools.10.0.22621.756.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.windowsappsdk\\1.6.240923002\\microsoft.windowsappsdk.1.6.240923002.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x86\\8.0.23\\microsoft.netcore.app.runtime.win-x86.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.19041.57\\microsoft.windows.sdk.net.ref.10.0.19041.57.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x86\\8.0.23\\microsoft.aspnetcore.app.runtime.win-x86.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.netcore.app.runtime.win-arm64\\8.0.23\\microsoft.netcore.app.runtime.win-arm64.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.23\\microsoft.aspnetcore.app.runtime.win-x64.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-arm64\\8.0.23\\microsoft.windowsdesktop.app.runtime.win-arm64.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.23\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-arm64\\8.0.23\\microsoft.aspnetcore.app.runtime.win-arm64.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.23\\microsoft.netcore.app.runtime.win-x64.8.0.23.nupkg.sha512",
+    "C:\\Users\\marca\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x86\\8.0.23\\microsoft.windowsdesktop.app.runtime.win-x86.8.0.23.nupkg.sha512"
+  ],
+  "logs": []
+}

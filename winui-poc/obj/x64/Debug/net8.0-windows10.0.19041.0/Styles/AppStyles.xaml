@@ -1,0 +1,190 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================================== -->
+    <!-- COLOR PALETTE - Modern Dark Glassmorphism     -->
+    <!-- ============================================== -->
+
+    <!-- Backgrounds - Dark Navy/Purple tones -->
+    <Color x:Key="BgDark">#0d0f1a</Color>
+    <Color x:Key="BgNavy">#141829</Color>
+    <Color x:Key="BgCard">#1e2235</Color>
+    <Color x:Key="BgCardHover">#262b42</Color>
+    <Color x:Key="BgGlass">#2a2f4a</Color>
+
+    <!-- Glass/Transparency -->
+    <Color x:Key="GlassOverlay">#40ffffff</Color>
+    <Color x:Key="GlassBorder">#30ffffff</Color>
+
+    <!-- Accent Gradients -->
+    <Color x:Key="AccentPink">#ec4899</Color>
+    <Color x:Key="AccentPurple">#a855f7</Color>
+    <Color x:Key="AccentCyan">#06b6d4</Color>
+    <Color x:Key="AccentBlue">#3b82f6</Color>
+
+    <!-- Status Colors -->
+    <Color x:Key="SuccessGreen">#10b981</Color>
+    <Color x:Key="SuccessCyan">#22d3ee</Color>
+    <Color x:Key="WarningYellow">#f59e0b</Color>
+    <Color x:Key="DangerRed">#ef4444</Color>
+
+    <!-- Text Colors -->
+    <Color x:Key="TextPrimary">#ffffff</Color>
+    <Color x:Key="TextSecondary">#94a3b8</Color>
+    <Color x:Key="TextMuted">#64748b</Color>
+
+    <!-- ============================================== -->
+    <!-- BRUSHES                                        -->
+    <!-- ============================================== -->
+
+    <SolidColorBrush x:Key="BgDarkBrush" Color="{StaticResource BgDark}"/>
+    <SolidColorBrush x:Key="BgNavyBrush" Color="{StaticResource BgNavy}"/>
+    <SolidColorBrush x:Key="BgCardBrush" Color="{StaticResource BgCard}"/>
+    <SolidColorBrush x:Key="BgGlassBrush" Color="{StaticResource BgGlass}"/>
+    <SolidColorBrush x:Key="GlassBorderBrush" Color="{StaticResource GlassBorder}"/>
+
+    <SolidColorBrush x:Key="AccentPinkBrush" Color="{StaticResource AccentPink}"/>
+    <SolidColorBrush x:Key="AccentPurpleBrush" Color="{StaticResource AccentPurple}"/>
+    <SolidColorBrush x:Key="AccentCyanBrush" Color="{StaticResource AccentCyan}"/>
+    <SolidColorBrush x:Key="AccentBlueBrush" Color="{StaticResource AccentBlue}"/>
+
+    <SolidColorBrush x:Key="SuccessGreenBrush" Color="{StaticResource SuccessGreen}"/>
+    <SolidColorBrush x:Key="SuccessCyanBrush" Color="{StaticResource SuccessCyan}"/>
+    <SolidColorBrush x:Key="WarningYellowBrush" Color="{StaticResource WarningYellow}"/>
+    <SolidColorBrush x:Key="DangerRedBrush" Color="{StaticResource DangerRed}"/>
+
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimary}"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondary}"/>
+    <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMuted}"/>
+
+    <!-- Gradient Brushes -->
+    <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="{StaticResource AccentPink}" Offset="0.0"/>
+        <GradientStop Color="{StaticResource AccentPurple}" Offset="0.5"/>
+        <GradientStop Color="{StaticResource AccentCyan}" Offset="1.0"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="HeaderGradientBrush" StartPoint="0,0" EndPoint="1,0.5">
+        <GradientStop Color="#ec4899" Offset="0.0"/>
+        <GradientStop Color="#8b5cf6" Offset="0.4"/>
+        <GradientStop Color="#6366f1" Offset="0.7"/>
+        <GradientStop Color="#3b82f6" Offset="1.0"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="CyanGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#06b6d4" Offset="0.0"/>
+        <GradientStop Color="#22d3ee" Offset="1.0"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="BackgroundGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#0d0f1a" Offset="0.0"/>
+        <GradientStop Color="#141829" Offset="0.5"/>
+        <GradientStop Color="#1a1f35" Offset="1.0"/>
+    </LinearGradientBrush>
+
+    <!-- ============================================== -->
+    <!-- STYLES                                         -->
+    <!-- ============================================== -->
+
+    <!-- Glass Card Style -->
+    <Style x:Key="GlassCard" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource BgCardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource GlassBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="16"/>
+        <Setter Property="Padding" Value="24"/>
+    </Style>
+
+    <!-- Stat Card Style -->
+    <Style x:Key="StatCard" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource BgCardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource GlassBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="16"/>
+        <Setter Property="Padding" Value="24,20"/>
+        <Setter Property="MinWidth" Value="160"/>
+    </Style>
+
+    <!-- Gradient Header Card -->
+    <Style x:Key="GradientCard" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource HeaderGradientBrush}"/>
+        <Setter Property="CornerRadius" Value="20"/>
+        <Setter Property="Padding" Value="28"/>
+    </Style>
+
+    <!-- Large Stat Value -->
+    <Style x:Key="StatValueLarge" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="36"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+    </Style>
+
+    <!-- Medium Stat Value -->
+    <Style x:Key="StatValueMedium" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="28"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+    </Style>
+
+    <!-- Stat Label -->
+    <Style x:Key="StatLabel" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+        <Setter Property="Margin" Value="0,8,0,0"/>
+    </Style>
+
+    <!-- Section Header -->
+    <Style x:Key="SectionHeader" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+        <Setter Property="CharacterSpacing" Value="60"/>
+    </Style>
+
+    <!-- Page Title -->
+    <Style x:Key="PageTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="28"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+    </Style>
+
+    <!-- Nav Button Style -->
+    <Style x:Key="NavButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+        <Setter Property="Padding" Value="16,14"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="CornerRadius" Value="12"/>
+    </Style>
+
+    <!-- Primary Button (Gradient) -->
+    <Style x:Key="PrimaryButton" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource AccentGradientBrush}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="Padding" Value="24,12"/>
+    </Style>
+
+    <!-- Secondary Button -->
+    <Style x:Key="SecondaryButton" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource BgCardBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource GlassBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="Padding" Value="24,12"/>
+    </Style>
+
+    <!-- Status Badge Base -->
+    <Style x:Key="StatusBadge" TargetType="Border">
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Padding" Value="10,5"/>
+    </Style>
+
+</ResourceDictionary>
+
