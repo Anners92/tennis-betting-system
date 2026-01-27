@@ -313,6 +313,15 @@ git push
 gh release create vX.X.X "installer_output/TennisBettingSystem_Setup_X.X.exe" --title "Tennis Betting System vX.X.X" --notes "Release notes here"
 ```
 
+### IMPORTANT: After Every Build
+
+**Always provide the user with the GitHub release download link:**
+```
+https://github.com/Anners92/tennis-betting-system/releases/latest
+```
+
+This link is shared with other users to download the installer.
+
 ---
 
 ## Current Version
