@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from database import db
 from name_matcher import name_matcher
+from config import normalize_tournament_name
 
 # Optional: Odds API for Pinnacle comparison
 try:
@@ -490,7 +491,7 @@ class BetfairTennisCapture:
                 'player2_liquidity': p2_liquidity,
                 'total_matched': odds_data.get('total_matched', 0),
                 'captured_at': datetime.utcnow().isoformat(),
-                'surface': self._guess_surface(comp_name),
+                'surface': self._guess_surface(comp_name, market.get('market_start_time', '')[:10]),
                 'pinnacle_p1_odds': (pinnacle_comparison.get('pinnacle_odds') or [None, None])[0] if pinnacle_comparison else None,
                 'pinnacle_p2_odds': (pinnacle_comparison.get('pinnacle_odds') or [None, None])[1] if pinnacle_comparison else None,
             }
@@ -511,26 +512,10 @@ class BetfairTennisCapture:
 
         return captured
 
-    def _guess_surface(self, competition_name: str) -> str:
-        """Guess surface from competition name."""
-        name = competition_name.lower()
-
-        clay_keywords = ['roland garros', 'french open', 'rome', 'madrid', 'barcelona',
-                        'monte carlo', 'buenos aires', 'rio', 'estoril', 'hamburg',
-                        'stuttgart', 'bastad', 'umag', 'kitzbuhel', 'gstaad', 'clay']
-
-        grass_keywords = ['wimbledon', 'queens', "queen's", 'halle', 'eastbourne',
-                         's-hertogenbosch', 'mallorca', 'newport', 'grass']
-
-        for keyword in clay_keywords:
-            if keyword in name:
-                return 'Clay'
-
-        for keyword in grass_keywords:
-            if keyword in name:
-                return 'Grass'
-
-        return 'Hard'
+    def _guess_surface(self, competition_name: str, date_str: str = None) -> str:
+        """Guess surface from competition name using centralized detection."""
+        from config import get_tournament_surface
+        return get_tournament_surface(competition_name, date_str)
 
     def _create_missing_player(self, player_name: str) -> Optional[Dict]:
         """Create a new player entry for a player not in the database."""
@@ -572,37 +557,44 @@ class BetfairTennisCapture:
         """Save captured matches to database as upcoming matches."""
         imported = 0
         players_added = 0
+        player_cache = {}  # Cache player lookups to avoid repeated DB queries
 
         for match in captured_matches:
             # Try to find player IDs using name_matcher first, then direct lookup
             p1_name = match['player1_name']
             p2_name = match['player2_name']
 
-            # Try name_matcher mapping first (maps Betfair names to DB player IDs)
-            p1_mapped_id = name_matcher.get_db_id(p1_name)
-            p2_mapped_id = name_matcher.get_db_id(p2_name)
+            # Check cache first for player 1
+            if p1_name in player_cache:
+                p1 = player_cache[p1_name]
+            else:
+                p1_mapped_id = name_matcher.get_db_id(p1_name)
+                p1 = None
+                if p1_mapped_id:
+                    p1 = db.get_player(p1_mapped_id)
+                if not p1:
+                    p1 = db.get_player_by_name(p1_name)
+                if not p1:
+                    p1 = self._create_missing_player(p1_name)
+                    if p1:
+                        players_added += 1
+                player_cache[p1_name] = p1
 
-            # Get player 1
-            p1 = None
-            if p1_mapped_id:
-                p1 = db.get_player(p1_mapped_id)
-            if not p1:
-                p1 = db.get_player_by_name(p1_name)
-            if not p1:
-                p1 = self._create_missing_player(p1_name)
-                if p1:
-                    players_added += 1
-
-            # Get player 2
-            p2 = None
-            if p2_mapped_id:
-                p2 = db.get_player(p2_mapped_id)
-            if not p2:
-                p2 = db.get_player_by_name(p2_name)
-            if not p2:
-                p2 = self._create_missing_player(p2_name)
-                if p2:
-                    players_added += 1
+            # Check cache first for player 2
+            if p2_name in player_cache:
+                p2 = player_cache[p2_name]
+            else:
+                p2_mapped_id = name_matcher.get_db_id(p2_name)
+                p2 = None
+                if p2_mapped_id:
+                    p2 = db.get_player(p2_mapped_id)
+                if not p2:
+                    p2 = db.get_player_by_name(p2_name)
+                if not p2:
+                    p2 = self._create_missing_player(p2_name)
+                    if p2:
+                        players_added += 1
+                player_cache[p2_name] = p2
 
             # Parse date and time from market_start_time
             start_time = match.get('market_start_time', '')
@@ -617,7 +609,7 @@ class BetfairTennisCapture:
                 match_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             match_data = {
-                'tournament': match.get('competition_name', ''),
+                'tournament': normalize_tournament_name(match.get('competition_name', '')),
                 'date': match_date,
                 'surface': match.get('surface', 'Hard'),
                 'round': '',
@@ -641,6 +633,7 @@ class BetfairTennisCapture:
         if players_added > 0:
             print(f"\nAdded {players_added} new players to database")
         print(f"Saved {imported} matches to database")
+
         return imported
 
 
@@ -1066,7 +1059,8 @@ class BetfairCaptureUI:
                 self.root.after(0, lambda: self._capture_complete(0, 0))
 
         except Exception as e:
-            self.root.after(0, lambda: self._capture_error(str(e)))
+            err_msg = str(e)
+            self.root.after(0, lambda msg=err_msg: self._capture_error(msg))
 
     def _capture_complete(self, captured: int, saved: int):
         """Handle capture completion."""

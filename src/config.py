@@ -4,6 +4,7 @@ Constants, surfaces, tournament categories, and analysis weights
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +34,16 @@ DATA_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
+# Copy seed database on first run (if installed app and no database exists)
+SEED_DB_PATH = INSTALL_DIR / "data" / "tennis_betting.db"
+if not DB_PATH.exists() and SEED_DB_PATH.exists():
+    import shutil
+    try:
+        shutil.copy2(SEED_DB_PATH, DB_PATH)
+        print(f"Copied seed database to {DB_PATH}")
+    except Exception as e:
+        print(f"Could not copy seed database: {e}")
+
 # ============================================================================
 # SURFACES
 # ============================================================================
@@ -48,6 +59,166 @@ SURFACE_MAPPING = {
     "g": "Grass",
     "p": "Carpet",  # Some datasets use 'P' for carpet
 }
+
+# ============================================================================
+# TOURNAMENT SURFACE DETECTION
+# Comprehensive mapping to avoid surface detection bugs
+# ============================================================================
+
+# CLAY tournaments - specific names only (no bare 'clay' keyword)
+CLAY_TOURNAMENTS = [
+    # Grand Slam
+    'roland garros', 'french open',
+    # Masters 1000
+    'monte carlo', 'madrid', 'rome', 'internazionali',
+    # ATP 500
+    'barcelona', 'hamburg', 'rio', 'rio de janeiro',
+    # ATP 250
+    'buenos aires', 'cordoba', 'santiago', 'sao paulo',
+    'estoril', 'munich', 'geneva', 'lyon', 'bastad',
+    'umag', 'kitzbuhel', 'gstaad', 'winston-salem', 'winston salem',
+    'marrakech', 'houston', 'cagliari', 'parma', 'belgrade',
+    'sardegna', 'tiriac', 'bucharest',
+    # WTA Clay
+    'charleston', 'strasbourg', 'rabat', 'bogota', 'prague',
+    'warsaw', 'portoroz', 'palermo', 'lausanne', 'budapest',
+    'birmingham wta',  # Note: Birmingham grass is different
+    # Challenger Clay (South America, Southern Europe)
+    'concepcion', 'santa cruz', 'campinas', 'santo domingo',
+    'medellin', 'salinas', 'lima', 'cali', 'guayaquil',
+    'san miguel de tucuman', 'punta del este', 'asuncion',
+    'barletta', 'francavilla', 'santa margherita', 'perugia',
+    'iasi', 'sibiu', 'split', 'zadar', 'todi', 'como',
+    'prague challenger', 'braunschweig', 'heilbronn', 'aix-en-provence',
+    'prostejov', 'liberec', 'szczecin', 'poznan', 'wroclaw',
+]
+
+# GRASS tournaments - ONLY during grass season (June-July)
+# These are the ONLY grass tournaments worldwide
+# IMPORTANT: Use specific names to avoid false matches (e.g., 'halle' matches 'challenger')
+GRASS_TOURNAMENTS = [
+    # Grand Slam
+    'wimbledon',
+    # ATP 500
+    'queens', "queen's", 'queen\'s club',
+    'atp halle', 'halle open', 'terra wortmann',  # Halle - be specific to avoid 'challenger' match
+    # ATP 250
+    's-hertogenbosch', 'hertogenbosch', 'rosmalen', 'libema open',
+    'boss open',  # Stuttgart grass (June) - different from Stuttgart indoor
+    'eastbourne', 'mallorca', 'newport',
+    # WTA Grass
+    'birmingham classic', 'rothesay classic birmingham',
+    'nottingham', 'rothesay open nottingham',
+    'berlin wta', 'ecotrans ladies',
+    'bad homburg', 'bad homburg open',
+]
+
+# Indoor Hard tournaments (for reference - still "Hard" surface)
+INDOOR_HARD_TOURNAMENTS = [
+    'paris masters', 'paris-bercy', 'rolex paris',
+    'vienna', 'basel', 'stockholm', 'antwerp', 'st petersburg',
+    'metz', 'sofia', 'moselle', 'marseille', 'montpellier',
+    'rotterdam', 'dallas', 'adelaide',
+    # Many winter Challengers are indoor hard
+    'quimper', 'oeiras', 'koblenz', 'loughborough', 'andria',
+]
+
+
+def _word_match(keyword: str, text: str) -> bool:
+    """
+    Check if keyword appears in text as a word (not as substring of another word).
+    E.g., 'rome' should match 'Rome Masters' but not 'Jerome'.
+    """
+    import re
+    # Use word boundaries for short keywords to avoid false matches
+    # For multi-word keywords, simple 'in' check is fine
+    if ' ' in keyword or len(keyword) > 6:
+        return keyword in text
+    # For short single words, use word boundary
+    pattern = r'\b' + re.escape(keyword) + r'\b'
+    return bool(re.search(pattern, text, re.IGNORECASE))
+
+
+def normalize_tournament_name(name: str) -> str:
+    """
+    Normalize tournament name to match database format.
+
+    Converts Betfair names to our standard format:
+    - Strips year suffixes (2024, 2025, 2026, etc.)
+    - Converts "Ladies/Men's X" to just "X" for Grand Slams
+    - Strips trailing whitespace
+
+    Args:
+        name: Tournament name from Betfair (e.g., "Concepcion Challenger 2026")
+
+    Returns:
+        Normalized name (e.g., "Concepcion Challenger")
+    """
+    if not name:
+        return name
+
+    # Strip year suffixes (2020-2029)
+    result = re.sub(r'\s+20[2-3]\d$', '', name)
+
+    # Handle Grand Slam prefixes
+    result = re.sub(r"^Ladies\s+", "", result)
+    result = re.sub(r"^Men's\s+", "", result)
+    result = re.sub(r"^Women's\s+", "", result)
+
+    return result.strip()
+
+
+def get_tournament_surface(tournament_name: str, date_str: str = None) -> str:
+    """
+    Determine tournament surface from name and optionally date.
+
+    This is the SINGLE SOURCE OF TRUTH for surface detection.
+    All other files should use this function.
+
+    Args:
+        tournament_name: Tournament name (e.g., "Oeiras Challenger 2026")
+        date_str: Optional date string (YYYY-MM-DD) to help with seasonal detection
+
+    Returns:
+        Surface: "Hard", "Clay", or "Grass"
+    """
+    if not tournament_name:
+        return "Hard"
+
+    name = tournament_name.lower()
+
+    # Check for explicit surface in name (from Tennis Explorer/databases)
+    # These are safe - they're from authoritative sources
+    if ' - clay' in name or '(clay)' in name:
+        return 'Clay'
+    if ' - grass' in name or '(grass)' in name:
+        return 'Grass'
+    if ' - hard' in name or '(hard)' in name or ' - indoor' in name:
+        return 'Hard'
+
+    # Seasonal check FIRST: Grass only happens June-July
+    # If it's NOT grass season, don't even check grass keywords
+    is_grass_season = False
+    if date_str:
+        try:
+            month = int(date_str[5:7])  # Extract month from YYYY-MM-DD
+            is_grass_season = month in [6, 7]
+        except (ValueError, IndexError):
+            is_grass_season = False
+
+    # Check against known clay tournaments
+    for clay_tourney in CLAY_TOURNAMENTS:
+        if _word_match(clay_tourney, name):
+            return 'Clay'
+
+    # Only check grass tournaments during grass season (June-July)
+    if is_grass_season:
+        for grass_tourney in GRASS_TOURNAMENTS:
+            if _word_match(grass_tourney, name):
+                return 'Grass'
+
+    # Default to Hard (most common surface, especially for Challengers)
+    return 'Hard'
 
 # ============================================================================
 # TOURNAMENT CATEGORIES

@@ -143,7 +143,8 @@ class BetfairTennisScraper:
                             # Determine surface from competition name
                             competition = event_node.get('competitionNode', {}).get('competition', {})
                             comp_name = competition.get('name', '')
-                            surface = self._guess_surface(comp_name, event.get('name', ''))
+                            event_date = event.get('openDate', '')[:10] if event.get('openDate') else None
+                            surface = self._guess_surface(comp_name, event.get('name', ''), event_date)
 
                             match_data = {
                                 'tournament': comp_name,
@@ -204,13 +205,14 @@ class BetfairTennisScraper:
                 p2_name = runners[1].get('runnerName', 'Player 2')
 
                 comp_name = competition.get('name', '')
-                surface = self._guess_surface(comp_name, event.get('name', ''))
+                event_date = event.get('openDate', '')[:10] if event.get('openDate') else None
+                surface = self._guess_surface(comp_name, event.get('name', ''), event_date)
 
                 match_data = {
                     'tournament': comp_name,
                     'event_name': event.get('name', ''),
                     'market_id': market_id,
-                    'date': event.get('openDate', '')[:10] if event.get('openDate') else datetime.now().strftime('%Y-%m-%d'),
+                    'date': event_date or datetime.now().strftime('%Y-%m-%d'),
                     'player1_name': p1_name,
                     'player2_name': p2_name,
                     'player1_odds': None,  # Need separate call for odds
@@ -227,33 +229,12 @@ class BetfairTennisScraper:
 
         return matches
 
-    def _guess_surface(self, competition_name: str, event_name: str = '') -> str:
-        """Guess the surface from tournament name."""
-        name = (competition_name + ' ' + event_name).lower()
-
-        # Clay tournaments
-        clay_keywords = ['roland garros', 'french open', 'rome', 'madrid', 'barcelona',
-                        'monte carlo', 'buenos aires', 'rio', 'estoril', 'hamburg',
-                        'stuttgart', 'bastad', 'umag', 'kitzbuhel', 'gstaad']
-
-        # Grass tournaments
-        grass_keywords = ['wimbledon', 'queens', "queen's", 'halle', 'stuttgart grass',
-                         'eastbourne', 's-hertogenbosch', 'mallorca', 'newport']
-
-        # Hard indoor
-        indoor_keywords = ['paris masters', 'vienna', 'basel', 'stockholm', 'antwerp',
-                          'st petersburg', 'metz', 'sofia', 'moselle']
-
-        for keyword in clay_keywords:
-            if keyword in name:
-                return 'Clay'
-
-        for keyword in grass_keywords:
-            if keyword in name:
-                return 'Grass'
-
-        # Default to Hard (most common)
-        return 'Hard'
+    def _guess_surface(self, competition_name: str, event_name: str = '', date_str: str = None) -> str:
+        """Guess the surface from tournament name using centralized detection."""
+        from config import get_tournament_surface
+        # Combine competition and event name for better matching
+        full_name = f"{competition_name} {event_name}".strip()
+        return get_tournament_surface(full_name, date_str)
 
     def fetch_market_odds(self, market_id: str) -> Dict:
         """Fetch current odds for a specific market."""

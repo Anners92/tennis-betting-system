@@ -44,17 +44,24 @@ class BetTracker:
         self.db = database or db
 
     def add_bet(self, bet_data: Dict) -> int:
-        """Add a new bet. Returns bet ID, or -1 if duplicate exists."""
+        """Add a new bet. Returns bet ID, or -1 if duplicate exists, -2 if match already bet."""
         # Check for duplicate first
         match_description = bet_data.get('match_description')
         selection = bet_data.get('selection')
         match_date = bet_data.get('match_date')
         tournament = bet_data.get('tournament')
 
-        if match_description and selection:
-            existing = self.db.check_duplicate_bet(match_description, selection, match_date, tournament)
-            if existing:
-                return -1  # Duplicate found
+        if match_description:
+            # Check if we already have ANY bet on this match (prevents betting both sides)
+            existing_match = self.db.check_match_already_bet(match_description, tournament)
+            if existing_match:
+                return -2  # Match already has a bet
+
+            # Check for exact duplicate (same selection)
+            if selection:
+                existing = self.db.check_duplicate_bet(match_description, selection, match_date, tournament)
+                if existing:
+                    return -1  # Duplicate found
 
         # Calculate implied probability and EV
         if bet_data.get('odds'):
@@ -2683,16 +2690,17 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                 'notes': notes_var.get(),
             }
 
-            # Check for duplicate bet (includes settled bets)
+            # Check if we already have ANY bet on this match (prevents betting both sides)
             tournament = tournament_var.get()
-            existing = db.check_duplicate_bet(match_desc, selection_var.get(), match_datetime, tournament)
-            if existing:
+            existing_match = db.check_match_already_bet(match_desc, tournament)
+            if existing_match:
                 messagebox.showerror(
-                    "Duplicate Bet",
-                    f"A bet already exists for this match and selection.\n\n"
+                    "Match Already Bet",
+                    f"A bet already exists for this match.\n\n"
                     f"Tournament: {tournament}\n"
                     f"Match: {match_desc}\n"
-                    f"Selection: {selection_var.get()}"
+                    f"Existing selection: {existing_match.get('selection', 'Unknown')}\n\n"
+                    f"You cannot bet on both players in the same match."
                 )
                 return
 

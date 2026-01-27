@@ -317,9 +317,19 @@ gh release create vX.X.X "installer_output/TennisBettingSystem_Setup_X.X.exe" --
 
 ## Current Version
 
-**Version:** 2.0.0
+**Version:** 2.1.0
 **Last Updated:** January 27, 2026
-**GitHub:** https://github.com/Anners92/tennis-betting-system/releases/tag/v2.0.0
+**GitHub:** https://github.com/Anners92/tennis-betting-system/releases/tag/v2.1.0
+
+### v2.1.0 Changes
+- **Manual Bet Feature** - Analyze any two players with searchable dropdowns and full analysis popup
+- **Surface Detection Fix** - Centralized in config.py, fixed 5,400+ matches with wrong surfaces (Halle/Challenger bug)
+- **Player Name Matching** - Improved algorithm to prevent false matches
+- **Tournament Profiles** - New tab in Database Management with search, stats, top performers
+- **Player Profiles** - Enhanced with surface stats, recent matches, fatigue, best/worst results
+- **Database UI** - Sortable columns, edit features for players and tournaments
+- **Data Quality** - Cleaned 3,665 corrupted player records
+- **Tournament Name Normalization** - Betfair names now match historical data
 
 ### v2.0.0 Changes
 - Fixed bet editing bug - user edits now persist (date sync skip on all user actions)

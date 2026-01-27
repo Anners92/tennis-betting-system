@@ -757,7 +757,7 @@ class MainApplication:
         full_refresh_btn = ModernButton(left, "Full Refresh", self._refresh_data,
                     color=self.ACCENT_SUCCESS, width=120, height=38, font_size=10)
         full_refresh_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self._add_tooltip(full_refresh_btn, "6 months of ATP/WTA/ITF data (~15-20 min)")
+        self._add_tooltip(full_refresh_btn, "12 months of ATP/WTA/ITF data (~30-40 min)")
 
         # Quick Refresh button with tooltip
         quick_refresh_btn = ModernButton(left, "Quick Refresh", self._quick_refresh_7_days,
@@ -775,7 +775,10 @@ class MainApplication:
                     color=self.ACCENT_PRIMARY, width=100, height=38, font_size=10).pack(side=tk.LEFT, padx=(0, 10))
 
         ModernButton(left, "Clear Matches", self._clear_all_matches,
-                    color=self.ACCENT_DANGER, width=130, height=38, font_size=10).pack(side=tk.LEFT, padx=(0, 15))
+                    color=self.ACCENT_DANGER, width=130, height=38, font_size=10).pack(side=tk.LEFT, padx=(0, 10))
+
+        ModernButton(left, "Manual Bet", self._open_manual_bet,
+                    color='#8b5cf6', width=110, height=38, font_size=10).pack(side=tk.LEFT, padx=(0, 15))
 
         # Auto Mode section (right side of quick actions)
         right = tk.Frame(actions_frame, bg=self.BG_DARK)
@@ -1296,6 +1299,551 @@ class MainApplication:
         messagebox.showinfo("Matches Cleared", f"Deleted {count} matches.")
         self._update_stats()
 
+    def _open_manual_bet(self):
+        """Open manual bet dialog to analyze any two players."""
+        from match_analyzer import MatchAnalyzer
+        from tkinter import ttk
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Manual Bet Analysis")
+        dialog.configure(bg=self.BG_DARK)
+        dialog.transient(self.root)
+
+        # Make window larger and center it
+        screen_width = dialog.winfo_screenwidth()
+        screen_height = dialog.winfo_screenheight()
+        dialog_width = 600
+        dialog_height = 350
+        x_pos = (screen_width - dialog_width) // 2
+        y_pos = (screen_height - dialog_height) // 2 - 50
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_pos}+{y_pos}")
+
+        # Store selected player IDs
+        selected_players = {'p1_id': None, 'p1_name': None, 'p2_id': None, 'p2_name': None}
+
+        # Main frame
+        main = tk.Frame(dialog, bg=self.BG_DARK, padx=20, pady=20)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(main, text="Manual Bet Analysis", font=("Segoe UI", 16, "bold"),
+                 bg=self.BG_DARK, fg=self.TEXT_PRIMARY).pack(anchor=tk.W, pady=(0, 15))
+
+        # Surface selection using Combobox (more reliable than Radiobuttons)
+        surface_frame = tk.Frame(main, bg=self.BG_DARK)
+        surface_frame.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(surface_frame, text="Surface:", font=("Segoe UI", 10),
+                 bg=self.BG_DARK, fg=self.TEXT_PRIMARY).pack(side=tk.LEFT, padx=(0, 10))
+
+        surface_var = tk.StringVar(value="Hard")
+        surface_combo = ttk.Combobox(surface_frame, textvariable=surface_var,
+                                     values=["Hard", "Clay", "Grass"], state="readonly", width=10)
+        surface_combo.pack(side=tk.LEFT)
+
+        def create_player_search(parent, label_text, player_key):
+            """Create a searchable player selection widget."""
+            frame = tk.Frame(parent, bg=self.BG_DARK)
+            frame.pack(fill=tk.X, pady=(0, 10))
+
+            tk.Label(frame, text=label_text, font=("Segoe UI", 10),
+                     bg=self.BG_DARK, fg=self.TEXT_PRIMARY).pack(side=tk.LEFT, padx=(0, 10))
+
+            search_var = tk.StringVar()
+            entry = tk.Entry(frame, textvariable=search_var, font=("Segoe UI", 10), width=30,
+                            bg="white", fg="black")
+            entry.pack(side=tk.LEFT, padx=(0, 10))
+
+            status_var = tk.StringVar(value="")
+            status_label = tk.Label(frame, textvariable=status_var, font=("Segoe UI", 9),
+                                   bg=self.BG_DARK, fg=self.TEXT_MUTED)
+            status_label.pack(side=tk.LEFT)
+
+            # Create listbox for suggestions - use Toplevel for true overlay
+            listbox_popup = tk.Toplevel(dialog)
+            listbox_popup.withdraw()  # Hide initially
+            listbox_popup.overrideredirect(True)  # No window decorations
+            listbox_popup.attributes('-topmost', True)
+
+            listbox = tk.Listbox(listbox_popup, font=("Segoe UI", 9), height=5,
+                                bg="white", fg="black", selectbackground=self.ACCENT_PRIMARY,
+                                relief="solid", borderwidth=1)
+            listbox.pack(fill=tk.BOTH, expand=True)
+
+            # Store search results
+            search_results = []
+
+            def show_listbox():
+                """Position and show the listbox popup under the entry."""
+                entry.update_idletasks()
+                x = entry.winfo_rootx()
+                y = entry.winfo_rooty() + entry.winfo_height()
+                width = entry.winfo_width()
+                listbox_popup.geometry(f"{width}x120+{x}+{y}")
+                listbox_popup.deiconify()
+                listbox_popup.lift()
+
+            def hide_listbox():
+                """Hide the listbox popup."""
+                listbox_popup.withdraw()
+
+            def on_search(*args):
+                """Search for players as user types."""
+                query = search_var.get().strip()
+
+                # If the current text matches the selected player name, don't search again
+                if query == selected_players.get(f'{player_key}_name'):
+                    hide_listbox()
+                    return
+
+                listbox.delete(0, tk.END)
+                search_results.clear()
+
+                # Clear selection if text changed by user
+                selected_players[f'{player_key}_id'] = None
+                selected_players[f'{player_key}_name'] = None
+                status_var.set("")
+
+                if len(query) < 2:
+                    hide_listbox()
+                    return
+
+                # Search for matching players
+                results = db.search_players(query, limit=10)
+                if results:
+                    for p in results:
+                        ranking = p.get('current_ranking') or 'NR'
+                        display = f"{p['name']} (Rank: {ranking})"
+                        listbox.insert(tk.END, display)
+                        search_results.append(p)
+                    show_listbox()
+                else:
+                    hide_listbox()
+                    status_var.set("No players found")
+
+            def on_select(event):
+                """Handle player selection from listbox."""
+                selection = listbox.curselection()
+                if selection and search_results:
+                    idx = selection[0]
+                    player = search_results[idx]
+                    # Store selection FIRST before changing text
+                    selected_players[f'{player_key}_id'] = player['id']
+                    selected_players[f'{player_key}_name'] = player['name']
+                    search_var.set(player['name'])
+                    status_var.set(f"✓ ID: {player['id']}")
+                    hide_listbox()
+
+            def on_focus_out(event):
+                """Hide listbox when entry loses focus (with delay for click)."""
+                dialog.after(200, hide_listbox)
+
+            # Bind events
+            search_var.trace_add('write', lambda *args: dialog.after(300, on_search))
+            listbox.bind('<<ListboxSelect>>', on_select)
+            entry.bind('<FocusOut>', on_focus_out)
+
+            # Clean up popup when dialog closes
+            def on_dialog_close():
+                listbox_popup.destroy()
+                dialog.destroy()
+
+            dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
+
+            return entry
+
+        # Player 1 selection
+        p1_entry = create_player_search(main, "Player 1:", "p1")
+
+        # Player 2 selection
+        p2_entry = create_player_search(main, "Player 2:", "p2")
+
+        # Status label for messages
+        status_label = tk.Label(main, text="Type player names to search, then select from the list and click Analyze",
+                                font=("Segoe UI", 10), bg=self.BG_DARK, fg=self.TEXT_SECONDARY)
+        status_label.pack(pady=(10, 0))
+
+        def analyze():
+            """Run analysis - opens the full match analysis screen."""
+            p1_id = selected_players.get('p1_id')
+            p1_name = selected_players.get('p1_name')
+            p2_id = selected_players.get('p2_id')
+            p2_name = selected_players.get('p2_name')
+
+            if not p1_id:
+                status_label.configure(text="Please select Player 1 from the search results.",
+                                       fg=self.ACCENT_DANGER)
+                return
+
+            if not p2_id:
+                status_label.configure(text="Please select Player 2 from the search results.",
+                                       fg=self.ACCENT_DANGER)
+                return
+
+            surface = surface_var.get()
+
+            # Create a match dictionary like bet_suggester expects
+            match_data = {
+                'player1_name': p1_name,
+                'player2_name': p2_name,
+                'player1_id': p1_id,
+                'player2_id': p2_id,
+                'surface': surface,
+                'tournament': f'Manual Analysis ({surface})',
+                'date': 'N/A',
+                'player1_odds': None,
+                'player2_odds': None,
+            }
+
+            # Open full analysis window directly
+            try:
+                self._show_manual_analysis(match_data)
+                status_label.configure(text="Analysis opened in new window.", fg=self.ACCENT_SUCCESS)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                status_label.configure(text=f"Error: {str(e)}", fg=self.ACCENT_DANGER)
+
+        # Button frame
+        btn_frame = tk.Frame(main, bg=self.BG_DARK)
+        btn_frame.pack(fill=tk.X, pady=(15, 0))
+
+        tk.Button(btn_frame, text="Analyze", font=("Segoe UI", 11, "bold"),
+                  fg="white", bg=self.ACCENT_SUCCESS, relief=tk.FLAT, cursor="hand2",
+                  command=analyze, padx=20, pady=8).pack(side=tk.LEFT)
+
+        tk.Button(btn_frame, text="Close", font=("Segoe UI", 10),
+                  fg="white", bg=self.BG_CARD_HOVER, relief=tk.FLAT, cursor="hand2",
+                  command=dialog.destroy, padx=15, pady=8).pack(side=tk.RIGHT)
+
+    def _show_manual_analysis(self, match: dict):
+        """Show detailed match analysis in a standalone dialog."""
+        from match_analyzer import MatchAnalyzer
+        from tkinter import ttk
+
+        p1_name = match.get('player1_name', 'Player 1')
+        p2_name = match.get('player2_name', 'Player 2')
+        p1_id = match.get('player1_id')
+        p2_id = match.get('player2_id')
+        surface = match.get('surface', 'Hard')
+
+        # Create dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Match Analysis: {p1_name} vs {p2_name}")
+        dialog.configure(bg=self.BG_DARK)
+
+        # Get screen dimensions and size dialog
+        screen_width = dialog.winfo_screenwidth()
+        screen_height = dialog.winfo_screenheight()
+        dialog_width = int(screen_width * 0.85)
+        dialog_height = int(screen_height * 0.80)
+        x_pos = (screen_width - dialog_width) // 2
+        y_pos = (screen_height - dialog_height) // 2 - 30
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_pos}+{y_pos}")
+
+        # Main frame with padding
+        main_frame = tk.Frame(dialog, bg=self.BG_DARK, padx=15, pady=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Header
+        header_frame = tk.Frame(main_frame, bg=self.BG_DARK)
+        header_frame.pack(fill=tk.X, pady=(0, 10))
+        header_text = f"{match.get('tournament', 'Manual Analysis')} - {surface}"
+        tk.Label(header_frame, text=header_text, font=("Segoe UI", 12, "bold"),
+                bg=self.BG_DARK, fg=self.TEXT_PRIMARY).pack(side=tk.LEFT)
+
+        if not p1_id or not p2_id:
+            tk.Label(main_frame, text="Cannot analyze: Player IDs not found.",
+                    font=("Segoe UI", 11), bg=self.BG_DARK, fg=self.ACCENT_DANGER).pack(pady=20)
+            return
+
+        # Get match counts
+        p1_matches = db.get_player_match_count(p1_id)
+        p2_matches = db.get_player_match_count(p2_id)
+
+        # Run analysis
+        try:
+            analyzer = MatchAnalyzer()
+            result = analyzer.calculate_win_probability(p1_id, p2_id, surface)
+            p1_prob = result['p1_probability'] * 100
+            p2_prob = result['p2_probability'] * 100
+            confidence = result['confidence'] * 100
+
+            # === TOP SECTION: Player Comparison ===
+            top_frame = tk.Frame(main_frame, bg=self.BG_CARD, padx=15, pady=15)
+            top_frame.pack(fill=tk.X, pady=(0, 15))
+
+            # Player 1 (Blue)
+            p1_section = tk.Frame(top_frame, bg=self.BG_CARD)
+            p1_section.pack(side=tk.LEFT, expand=True)
+            tk.Label(p1_section, text=p1_name, font=("Segoe UI", 14, "bold"),
+                    fg="#1976d2", bg=self.BG_CARD).pack()
+            tk.Label(p1_section, text=f"ID: {p1_id}", font=("Segoe UI", 8),
+                    fg=self.TEXT_MUTED, bg=self.BG_CARD).pack()
+            tk.Label(p1_section, text=f"{p1_prob:.1f}%", font=("Segoe UI", 28, "bold"),
+                    fg="#1976d2", bg=self.BG_CARD).pack()
+            tk.Label(p1_section, text=f"{p1_matches} matches in DB", font=("Segoe UI", 9),
+                    fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack()
+            if p1_matches < 10:
+                tk.Label(p1_section, text="⚠ LOW DATA", font=("Segoe UI", 9, "bold"),
+                        fg=self.ACCENT_DANGER, bg=self.BG_CARD).pack(pady=(5, 0))
+
+            # VS + Confidence
+            vs_frame = tk.Frame(top_frame, bg=self.BG_CARD)
+            vs_frame.pack(side=tk.LEFT, padx=30)
+            tk.Label(vs_frame, text="vs", font=("Segoe UI", 18),
+                    fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack()
+            tk.Label(vs_frame, text=f"Confidence: {confidence:.0f}%", font=("Segoe UI", 10),
+                    fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack()
+
+            # Player 2 (Yellow/Gold)
+            p2_section = tk.Frame(top_frame, bg=self.BG_CARD)
+            p2_section.pack(side=tk.LEFT, expand=True)
+            tk.Label(p2_section, text=p2_name, font=("Segoe UI", 14, "bold"),
+                    fg="#ffc107", bg=self.BG_CARD).pack()
+            tk.Label(p2_section, text=f"ID: {p2_id}", font=("Segoe UI", 8),
+                    fg=self.TEXT_MUTED, bg=self.BG_CARD).pack()
+            tk.Label(p2_section, text=f"{p2_prob:.1f}%", font=("Segoe UI", 28, "bold"),
+                    fg="#ffc107", bg=self.BG_CARD).pack()
+            tk.Label(p2_section, text=f"{p2_matches} matches in DB", font=("Segoe UI", 9),
+                    fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack()
+            if p2_matches < 10:
+                tk.Label(p2_section, text="⚠ LOW DATA", font=("Segoe UI", 9, "bold"),
+                        fg=self.ACCENT_DANGER, bg=self.BG_CARD).pack(pady=(5, 0))
+
+            # === MIDDLE SECTION: Two columns ===
+            middle_frame = tk.Frame(main_frame, bg=self.BG_DARK)
+            middle_frame.pack(fill=tk.BOTH, expand=True)
+
+            # Left: Factor Analysis
+            left_frame = tk.Frame(middle_frame, bg=self.BG_CARD, padx=15, pady=15)
+            left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+            tk.Label(left_frame, text="Factor Analysis (8 Factors)", font=("Segoe UI", 11, "bold"),
+                    fg=self.TEXT_PRIMARY, bg=self.BG_CARD).pack(anchor=tk.W, pady=(0, 10))
+
+            # Factor table header
+            header_row = tk.Frame(left_frame, bg=self.BG_CARD)
+            header_row.pack(fill=tk.X, pady=(0, 5))
+            for col, (text, width) in enumerate([("Factor", 100), (p1_name[:12], 100), (p2_name[:12], 100), ("Adv", 60), ("Weight", 60)]):
+                color = "#1976d2" if col == 1 else "#ffc107" if col == 2 else self.TEXT_SECONDARY
+                tk.Label(header_row, text=text, font=("Segoe UI", 9, "bold"), width=width//8,
+                        fg=color, bg=self.BG_CARD, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+
+            # Factor rows
+            factor_order = ['ranking', 'form', 'surface', 'h2h', 'fatigue', 'injury', 'recent_loss', 'momentum']
+            for factor_key in factor_order:
+                factor_data = result.get('factors', {}).get(factor_key, {})
+                if not isinstance(factor_data, dict):
+                    continue
+
+                row = tk.Frame(left_frame, bg=self.BG_CARD)
+                row.pack(fill=tk.X, pady=2)
+
+                # Factor name
+                display_name = factor_key.replace('_', ' ').title()
+                tk.Label(row, text=display_name, font=("Segoe UI", 9), width=12,
+                        fg=self.TEXT_PRIMARY, bg=self.BG_CARD, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+
+                # P1 value
+                p1_val = self._get_factor_display(factor_key, factor_data, 'p1')
+                tk.Label(row, text=p1_val, font=("Segoe UI", 9), width=12,
+                        fg="#1976d2", bg=self.BG_CARD).pack(side=tk.LEFT, padx=2)
+
+                # P2 value
+                p2_val = self._get_factor_display(factor_key, factor_data, 'p2')
+                tk.Label(row, text=p2_val, font=("Segoe UI", 9), width=12,
+                        fg="#ffc107", bg=self.BG_CARD).pack(side=tk.LEFT, padx=2)
+
+                # Advantage
+                adv = factor_data.get('advantage', 0)
+                adv_color = "#22c55e" if adv > 0 else "#ef4444" if adv < 0 else self.TEXT_MUTED
+                tk.Label(row, text=f"{adv:+.2f}", font=("Segoe UI", 9), width=7,
+                        fg=adv_color, bg=self.BG_CARD).pack(side=tk.LEFT, padx=2)
+
+                # Weight
+                weight = factor_data.get('weight', 0)
+                tk.Label(row, text=f"{weight*100:.0f}%", font=("Segoe UI", 9), width=7,
+                        fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack(side=tk.LEFT, padx=2)
+
+            # Right: Recent Matches
+            right_frame = tk.Frame(middle_frame, bg=self.BG_CARD, padx=15, pady=15)
+            right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            tk.Label(right_frame, text="Recent Matches", font=("Segoe UI", 11, "bold"),
+                    fg=self.TEXT_PRIMARY, bg=self.BG_CARD).pack(anchor=tk.W, pady=(0, 10))
+
+            matches_row = tk.Frame(right_frame, bg=self.BG_CARD)
+            matches_row.pack(fill=tk.BOTH, expand=True)
+
+            # Player 1 recent matches
+            p1_matches_frame = tk.Frame(matches_row, bg=self.BG_CARD)
+            p1_matches_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+            tk.Label(p1_matches_frame, text=p1_name[:20], font=("Segoe UI", 9, "bold"),
+                    fg="#1976d2", bg=self.BG_CARD).pack(anchor=tk.W)
+            p1_recent = db.get_player_matches(p1_id, limit=8)
+            self._show_recent_matches(p1_matches_frame, p1_recent, p1_id)
+
+            # Player 2 recent matches
+            p2_matches_frame = tk.Frame(matches_row, bg=self.BG_CARD)
+            p2_matches_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            tk.Label(p2_matches_frame, text=p2_name[:20], font=("Segoe UI", 9, "bold"),
+                    fg="#ffc107", bg=self.BG_CARD).pack(anchor=tk.W)
+            p2_recent = db.get_player_matches(p2_id, limit=8)
+            self._show_recent_matches(p2_matches_frame, p2_recent, p2_id)
+
+            # === BOTTOM SECTION: Value Analysis + Analysis Summary ===
+            bottom_frame = tk.Frame(main_frame, bg=self.BG_DARK)
+            bottom_frame.pack(fill=tk.X, pady=(15, 0))
+
+            # Value Analysis (left)
+            value_frame = tk.Frame(bottom_frame, bg=self.BG_CARD, padx=15, pady=15)
+            value_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+            tk.Label(value_frame, text="Value Analysis", font=("Segoe UI", 11, "bold"),
+                    fg=self.TEXT_PRIMARY, bg=self.BG_CARD).pack(anchor=tk.W, pady=(0, 10))
+
+            # Value table header
+            val_header = tk.Frame(value_frame, bg=self.BG_CARD)
+            val_header.pack(fill=tk.X)
+            tk.Label(val_header, text="", font=("Segoe UI", 9), width=15,
+                    bg=self.BG_CARD).pack(side=tk.LEFT)
+            tk.Label(val_header, text=p1_name[:15], font=("Segoe UI", 9, "bold"), width=12,
+                    fg="#1976d2", bg=self.BG_CARD).pack(side=tk.LEFT)
+            tk.Label(val_header, text=p2_name[:15], font=("Segoe UI", 9, "bold"), width=12,
+                    fg="#ffc107", bg=self.BG_CARD).pack(side=tk.LEFT)
+
+            # Value rows
+            value_rows = [
+                ("Betfair Odds", "N/A", "N/A"),
+                ("Implied Prob", "N/A", "N/A"),
+                ("Our Prob", f"{p1_prob:.1f}%", f"{p2_prob:.1f}%"),
+                ("Edge", "N/A", "N/A"),
+                ("Expected Value", "N/A", "N/A"),
+            ]
+            for label, v1, v2 in value_rows:
+                row = tk.Frame(value_frame, bg=self.BG_CARD)
+                row.pack(fill=tk.X, pady=2)
+                tk.Label(row, text=label, font=("Segoe UI", 9), width=15,
+                        fg=self.TEXT_SECONDARY, bg=self.BG_CARD, anchor=tk.W).pack(side=tk.LEFT)
+                tk.Label(row, text=v1, font=("Segoe UI", 9), width=12,
+                        fg="#1976d2" if v1 != "N/A" else self.TEXT_MUTED, bg=self.BG_CARD).pack(side=tk.LEFT)
+                tk.Label(row, text=v2, font=("Segoe UI", 9), width=12,
+                        fg="#ffc107" if v2 != "N/A" else self.TEXT_MUTED, bg=self.BG_CARD).pack(side=tk.LEFT)
+
+            tk.Label(value_frame, text="(No Betfair odds - Manual Analysis)",
+                    font=("Segoe UI", 8, "italic"), fg=self.TEXT_MUTED, bg=self.BG_CARD).pack(anchor=tk.W, pady=(10, 0))
+
+            # Analysis Summary (right)
+            summary_frame = tk.Frame(bottom_frame, bg=self.BG_CARD, padx=15, pady=15)
+            summary_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            tk.Label(summary_frame, text="Analysis Summary", font=("Segoe UI", 11, "bold"),
+                    fg=self.TEXT_PRIMARY, bg=self.BG_CARD).pack(anchor=tk.W, pady=(0, 10))
+
+            # Model prediction
+            model_row = tk.Frame(summary_frame, bg=self.BG_CARD)
+            model_row.pack(fill=tk.X, pady=2)
+            tk.Label(model_row, text="Model:", font=("Segoe UI", 9),
+                    fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack(side=tk.LEFT)
+            favored = p1_name if p1_prob > p2_prob else p2_name
+            favored_prob = max(p1_prob, p2_prob)
+            favored_color = "#1976d2" if p1_prob > p2_prob else "#ffc107"
+            tk.Label(model_row, text=f"  {favored} {favored_prob:.0f}%", font=("Segoe UI", 9, "bold"),
+                    fg=favored_color, bg=self.BG_CARD).pack(side=tk.LEFT)
+
+            # Both favor
+            tk.Label(summary_frame, text=f"Model favors: {favored}", font=("Segoe UI", 9),
+                    fg=self.TEXT_PRIMARY, bg=self.BG_CARD).pack(anchor=tk.W, pady=(10, 5))
+
+            # Key factors
+            tk.Label(summary_frame, text="Key Factors:", font=("Segoe UI", 9, "bold"),
+                    fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack(anchor=tk.W, pady=(10, 2))
+
+            # Find top 3 factors by contribution
+            factors = result.get('factors', {})
+            factor_contribs = []
+            for key, data in factors.items():
+                if isinstance(data, dict) and 'contribution' in data:
+                    contrib = abs(data.get('contribution', 0))
+                    factor_contribs.append((key, contrib, data.get('advantage', 0)))
+            factor_contribs.sort(key=lambda x: x[1], reverse=True)
+
+            for key, contrib, adv in factor_contribs[:3]:
+                adv_player = p1_name if adv > 0 else p2_name if adv < 0 else "Even"
+                display_name = key.replace('_', ' ').title()
+                tk.Label(summary_frame, text=f"• {display_name}: {adv_player}",
+                        font=("Segoe UI", 8), fg=self.TEXT_PRIMARY, bg=self.BG_CARD).pack(anchor=tk.W)
+
+            # Confidence
+            tk.Label(summary_frame, text=f"\nModel Confidence:", font=("Segoe UI", 9, "bold"),
+                    fg=self.TEXT_SECONDARY, bg=self.BG_CARD).pack(anchor=tk.W, pady=(10, 2))
+
+            conf_level = "High" if confidence >= 70 else "Medium" if confidence >= 50 else "Low"
+            total_adv = result.get('total_weighted_advantage', 0)
+            tk.Label(summary_frame, text=f"{conf_level} ({confidence:.0f}%) - Weighted adv: {total_adv:.3f}",
+                    font=("Segoe UI", 9), fg=self.ACCENT_SUCCESS if conf_level == "High" else self.TEXT_PRIMARY,
+                    bg=self.BG_CARD).pack(anchor=tk.W)
+
+            # Bring window to front
+            dialog.lift()
+            dialog.focus_force()
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            tk.Label(main_frame, text=f"Error analyzing match:\n{str(e)}",
+                    font=("Segoe UI", 11), bg=self.BG_DARK, fg=self.ACCENT_DANGER).pack(pady=20)
+
+    def _get_factor_display(self, factor_key: str, factor_data: dict, player: str) -> str:
+        """Get display value for a factor."""
+        try:
+            if factor_key == 'ranking':
+                data = factor_data.get('data', {})
+                rank = data.get(f'{player}_rank', '?')
+                return f"#{rank}"
+            elif factor_key == 'form':
+                p_data = factor_data.get(player, {})
+                return f"{p_data.get('wins', 0)}W-{p_data.get('losses', 0)}L"
+            elif factor_key == 'surface':
+                p_data = factor_data.get(player, {})
+                rate = p_data.get('combined_win_rate', 0) * 100
+                return f"{rate:.0f}%"
+            elif factor_key == 'h2h':
+                data = factor_data.get('data', {})
+                return f"{data.get(f'{player}_wins', 0)} wins"
+            elif factor_key in ['fatigue', 'injury']:
+                p_data = factor_data.get(player, {})
+                return p_data.get('status', 'OK')[:10]
+            elif factor_key == 'recent_loss':
+                p_data = factor_data.get(player, {})
+                return p_data.get('status', '-')[:10]
+            elif factor_key == 'momentum':
+                p_data = factor_data.get(player, {})
+                return f"{p_data.get('score', 50):.0f}"
+            return "-"
+        except:
+            return "-"
+
+    def _show_recent_matches(self, parent, matches: list, player_id: int):
+        """Show recent matches list."""
+        if not matches:
+            tk.Label(parent, text="No recent matches", font=("Segoe UI", 8),
+                    fg=self.TEXT_MUTED, bg=self.BG_CARD).pack(anchor=tk.W)
+            return
+
+        for match in matches[:8]:
+            winner_id = match.get('winner_id')
+            loser_id = match.get('loser_id')
+            is_win = winner_id == player_id
+            opponent = match.get('loser_name') if is_win else match.get('winner_name')
+            result_text = "W" if is_win else "L"
+            result_color = "#22c55e" if is_win else "#ef4444"
+            surface = match.get('surface', '?')[0] if match.get('surface') else '?'
+
+            match_text = f"{result_text} vs {opponent[:15]} ({surface})"
+            tk.Label(parent, text=match_text, font=("Segoe UI", 8),
+                    fg=result_color if is_win else self.TEXT_SECONDARY, bg=self.BG_CARD).pack(anchor=tk.W)
+
     def _auto_startup_tasks(self):
         """Run startup tasks: backfill model tags and fetch Betfair matches."""
         def startup_thread():
@@ -1327,7 +1875,8 @@ class MainApplication:
                         "Betfair credentials not configured", False))
             except Exception as e:
                 print(f"Startup tasks error: {e}")
-                self.root.after(0, lambda: self._update_bg_status(f"Startup: {str(e)[:30]}", False))
+                err_msg = str(e)[:30]
+                self.root.after(0, lambda msg=err_msg: self._update_bg_status(f"Startup: {msg}", False))
 
         threading.Thread(target=startup_thread, daemon=True).start()
 

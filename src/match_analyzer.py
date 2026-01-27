@@ -238,7 +238,7 @@ class MatchAnalyzer:
             "score": round(combined_win_rate * 100, 1),
             "avg_games_won": stat.get('avg_games_won', 0),
             "avg_games_lost": stat.get('avg_games_lost', 0),
-            "has_data": career_matches >= 5  # Need at least 5 surface matches
+            "has_data": (career_matches >= 5) or (recent_matches_count >= 5)  # Need at least 5 surface matches
         }
 
     def _calculate_surface_stats(self, player_id: int, surface: str) -> Dict:

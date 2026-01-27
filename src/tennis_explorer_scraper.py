@@ -732,28 +732,10 @@ class TennisExplorerScraper:
             print(f"Error fetching year matches: {e}")
             return matches
 
-    def _guess_surface(self, tournament_name: str) -> str:
-        """Guess surface from tournament name."""
-        name = tournament_name.lower()
-
-        clay_keywords = ['roland garros', 'french open', 'rome', 'madrid', 'barcelona',
-                        'monte carlo', 'buenos aires', 'rio', 'estoril', 'hamburg',
-                        'stuttgart', 'bastad', 'umag', 'kitzbuhel', 'gstaad', 'clay',
-                        'bogota', 'charleston', 'rabat', 'strasbourg', 'parma']
-
-        grass_keywords = ['wimbledon', 'queens', "queen's", 'halle', 'eastbourne',
-                         's-hertogenbosch', 'mallorca', 'newport', 'grass', 'birmingham',
-                         'berlin', 'bad homburg', 'nottingham']
-
-        for keyword in clay_keywords:
-            if keyword in name:
-                return 'Clay'
-
-        for keyword in grass_keywords:
-            if keyword in name:
-                return 'Grass'
-
-        return 'Hard'
+    def _guess_surface(self, tournament_name: str, date_str: str = None) -> str:
+        """Guess surface from tournament name using centralized detection."""
+        from config import get_tournament_surface
+        return get_tournament_surface(tournament_name, date_str)
 
     def fetch_and_update_player(self, player_id: int, player_name: str) -> Dict:
         """Fetch player data from Tennis Explorer and update database."""

@@ -1469,8 +1469,10 @@ class BetSuggesterUI:
             # Player 1 section (Blue)
             p1_section = ttk.Frame(top_frame, style="Card.TFrame")
             p1_section.pack(side=tk.LEFT, expand=True)
-            tk.Label(p1_section, text=p1_name, font=("Segoe UI", 10, "bold"),
-                     fg=UI_COLORS["player1"], bg=UI_COLORS["bg_medium"]).pack()
+            p1_name_label = tk.Label(p1_section, text=p1_name, font=("Segoe UI", 10, "bold"),
+                     fg=UI_COLORS["player1"], bg=UI_COLORS["bg_medium"], cursor="hand2")
+            p1_name_label.pack()
+            p1_name_label.bind("<Button-1>", lambda e, pid=p1_id, pname=p1_name: self._open_player_profile(dialog, pid, pname))
             tk.Label(p1_section, text=f"ID: {p1_id}", font=("Segoe UI", 7),
                      fg=UI_COLORS["text_secondary"], bg=UI_COLORS["bg_medium"]).pack()
             tk.Label(p1_section, text=f"{p1_prob:.1f}%", font=("Segoe UI", 18, "bold"),
@@ -1491,6 +1493,12 @@ class BetSuggesterUI:
                     font=("Segoe UI", 10, "bold"), fg="white", bg=UI_COLORS["success"],
                     padx=12, pady=4)
                 value_badge.pack(pady=(8, 0))
+            # Low data warning for Player 1
+            if p1_matches < 10:
+                low_data_label = tk.Label(p1_section, text=f"⚠ LOW DATA ({p1_matches} matches) - Click to edit",
+                    font=("Segoe UI", 8), fg=UI_COLORS["danger"], bg=UI_COLORS["bg_medium"], cursor="hand2")
+                low_data_label.pack(pady=(5, 0))
+                low_data_label.bind("<Button-1>", lambda e, pid=p1_id, pname=p1_name: self._open_player_profile(dialog, pid, pname))
 
             # VS + Confidence
             vs_frame = ttk.Frame(top_frame, style="Card.TFrame")
@@ -1502,8 +1510,10 @@ class BetSuggesterUI:
             # Player 2 section (Yellow)
             p2_section = ttk.Frame(top_frame, style="Card.TFrame")
             p2_section.pack(side=tk.LEFT, expand=True)
-            tk.Label(p2_section, text=p2_name, font=("Segoe UI", 10, "bold"),
-                     fg=UI_COLORS["player2"], bg=UI_COLORS["bg_medium"]).pack()
+            p2_name_label = tk.Label(p2_section, text=p2_name, font=("Segoe UI", 10, "bold"),
+                     fg=UI_COLORS["player2"], bg=UI_COLORS["bg_medium"], cursor="hand2")
+            p2_name_label.pack()
+            p2_name_label.bind("<Button-1>", lambda e, pid=p2_id, pname=p2_name: self._open_player_profile(dialog, pid, pname))
             tk.Label(p2_section, text=f"ID: {p2_id}", font=("Segoe UI", 7),
                      fg=UI_COLORS["text_secondary"], bg=UI_COLORS["bg_medium"]).pack()
             tk.Label(p2_section, text=f"{p2_prob:.1f}%", font=("Segoe UI", 18, "bold"),
@@ -1524,6 +1534,12 @@ class BetSuggesterUI:
                     font=("Segoe UI", 10, "bold"), fg="white", bg=UI_COLORS["success"],
                     padx=12, pady=4)
                 value_badge.pack(pady=(8, 0))
+            # Low data warning for Player 2
+            if p2_matches < 10:
+                low_data_label = tk.Label(p2_section, text=f"⚠ LOW DATA ({p2_matches} matches) - Click to edit",
+                    font=("Segoe UI", 8), fg=UI_COLORS["danger"], bg=UI_COLORS["bg_medium"], cursor="hand2")
+                low_data_label.pack(pady=(5, 0))
+                low_data_label.bind("<Button-1>", lambda e, pid=p2_id, pname=p2_name: self._open_player_profile(dialog, pid, pname))
 
             # === MIDDLE ROW: Factor Analysis (left) + Recent Matches (right) ===
             middle_frame = ttk.Frame(main_frame, style="Dark.TFrame")
@@ -5054,6 +5070,11 @@ class BetSuggesterUI:
 
         # Focus search entry
         search_entry.focus_set()
+
+    def _open_player_profile(self, parent, player_id: int, player_name: str):
+        """Open player profile popup when clicking on player name."""
+        from database_ui import open_player_profile
+        open_player_profile(parent, player_id, player_name)
 
     def _place_bet_from_analysis(self, match: Dict, player_name: str, odds, our_probability: float):
         """Place bet from the match analysis dialog."""

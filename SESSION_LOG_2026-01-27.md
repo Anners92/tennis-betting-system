@@ -531,9 +531,822 @@ Built new installer with all session fixes:
 
 ---
 
+---
+
+## CRITICAL BUG FIX: Surface Detection Error
+
+### The Problem
+Investigation of a 2.5u losing bet on Juan Carlos Prado Angel revealed incorrect surface data.
+- **Bet:** Juan Carlos Prado Angel @ 2.24, Oeiras Challenger
+- **Surface in system:** Grass
+- **Actual surface:** Indoor Hard (Oeiras in January is always indoor hard)
+- **Impact:** Surface factor has 20% weight in analysis - wrong data skews probability
+
+### Investigation Findings
+6 tournaments were incorrectly marked as "Grass":
+- Oeiras Challenger 2026 (Portugal, January) - Should be **Hard**
+- Concepcion Challenger 2026 (Chile) - Should be **Clay**
+- Manama Challenger 2026 (Bahrain) - Should be **Hard**
+- Phan Thiet Challenger 2026 (Vietnam) - Should be **Hard**
+- Quimper Challenger 2026 (France) - Should be **Hard**
+- San Diego CA Challenger 2026 (USA) - Should be **Hard**
+
+### Root Cause
+**Bug in `betfair_capture.py:523`:** The keyword `'halle'` (a German grass tournament) was matching `'ch**ALLE**nger'` because it was a substring match. All Challenger tournaments were getting detected as Grass.
+
+Additionally, the bare keyword `'grass'` was in the list, which could match unexpected tournament names.
+
+### The Fix
+
+#### 1. Created Centralized Surface Detection (`config.py`)
+New function `get_tournament_surface()` is now the single source of truth:
+- Comprehensive CLAY_TOURNAMENTS list (60+ tournaments)
+- Comprehensive GRASS_TOURNAMENTS list (specific names, no false matches)
+- **Seasonal check:** Grass tournaments ONLY happen in June-July
+- **Word boundary matching:** Short keywords like 'rome' won't match 'Jerome'
+- Date-aware: If date is not June/July, surface cannot be Grass
+
+#### 2. Updated All Surface Detection Code
+Files updated to use centralized function:
+- `betfair_capture.py`
+- `betfair_tennis.py`
+- `tennis_explorer_scraper.py`
+- `te_import_dialog.py`
+
+#### 3. Fixed Database
+**51 matches corrected** in `upcoming_matches` table:
+- Oeiras: Grass -> Hard (7 matches)
+- Manama: Grass -> Hard (11 matches)
+- Phan Thiet: Grass -> Hard (8 matches)
+- Quimper: Grass -> Hard (12 matches)
+- San Diego CA: Grass -> Hard (13 matches)
+
+Concepcion correctly changed to Clay (7 matches - already done earlier).
+
+### Test Results
+All surface detection tests pass:
+```
+[PASS] Oeiras Challenger 2026 (2026-01-28) -> Hard
+[PASS] Manama Challenger 2026 (2026-01-27) -> Hard
+[PASS] Concepcion Challenger 2026 (2026-01-27) -> Clay
+[PASS] ATP Halle 2026 (2026-06-15) -> Grass
+[PASS] Wimbledon 2026 (2026-07-01) -> Grass
+[PASS] Eastbourne 2026 (2026-06-20) -> Grass
+[PASS] Eastbourne 2026 (2026-01-20) -> Hard (NOT grass season!)
+```
+
+### Files Changed
+- `src/config.py` - Added centralized `get_tournament_surface()` function
+- `src/betfair_capture.py` - Uses centralized function
+- `src/betfair_tennis.py` - Uses centralized function
+- `src/tennis_explorer_scraper.py` - Uses centralized function
+- `src/te_import_dialog.py` - Uses centralized function
+- All synced to `dist/TennisBettingSystem/`
+
+### Impact on Juan Carlos Prado Angel Bet
+The bet was analyzed with incorrect surface data (Grass instead of Hard). This likely:
+- Used wrong surface stats for both players
+- Inflated the calculated edge
+- Led to a larger stake (2.5u) than warranted
+
+**This is a data quality issue, not a model issue.** Future bets will have correct surface detection.
+
+---
+
+## CRITICAL BUG FIX: Historical Match Surface Data Corrupted
+
+### The Problem
+After fixing the surface detection code, discovered that 5,401 historical matches in the `matches` table also had wrong surfaces from when they were imported with the buggy code.
+
+### The Fix
+Ran database update using the corrected `get_tournament_surface()` function:
+- **1,118 matches** corrected from Grass → Clay
+- **4,283 matches** corrected from Grass → Hard
+
+This ensures all historical data used for probability calculations is now correct.
+
+---
+
+## BUG FIX: Player Name Matching
+
+### The Problem
+When recalculating affected bets, player name matching was returning wrong players:
+- Query: "Frederico Ferreira Silva"
+- Found: "Daniel Dutra da Silva" (WRONG)
+- Expected: "Ferreira Silva Frederico"
+
+### Root Cause
+Database stores names as "LastName FirstName" but Betfair uses "FirstName LastName". The old matching code had a dangerous "last name only" strategy that matched "% Silva" and returned the wrong player.
+
+### The Fix
+Rewrote `get_player_by_name()` in `database.py` with improved matching:
+1. **Strategy 0:** Check `name_mappings.json` first
+2. **Strategy 1:** Exact match (case-insensitive)
+3. **Strategy 2:** Reversed name order ("A B C" → "B C A" and "C B A")
+4. **Strategy 3:** All name parts must be present (in any order)
+5. **Strategy 4:** First and last name in any order (for 2-part names)
+6. **Strategy 5:** Fuzzy match with 0.85 threshold (last resort)
+
+**Removed:** The dangerous last-name-only matching that caused false matches.
+
+### Files Changed
+- `src/database.py` - Rewrote `get_player_by_name()` function
+
+---
+
+## BUG FIX: Stale Player Surface Stats Table
+
+### The Problem
+After all fixes, many bets still showed 50% probability (no edge). Investigation revealed:
+- `player_surface_stats` table had 4,165 rows of **stale data**
+- This data was populated once with buggy surface info (showing "Grass" matches that didn't exist)
+- `matches_played` column was NULL, causing `career_matches = 0`
+- Code was using stale table data instead of calculating fresh from `matches` table
+
+Example: August Holmgren showed 17 Hard matches in `matches` table but 0 career matches in surface stats because the lookup used the stale table.
+
+### The Fix
+Cleared the stale `player_surface_stats` table (4,165 rows deleted). The system now falls back to `_calculate_surface_stats()` which calculates directly from the corrected `matches` table.
+
+### Verification
+After fix, August Holmgren now correctly shows:
+- career_matches: 17
+- has_data: True
+- combined_win_rate: 0.412
+
+---
+
+## Affected Bets Analysis (Final)
+
+### Summary
+- **76 bets** were placed with wrong surface data (marked as Grass but actually Hard/Clay)
+- **75 successfully reanalyzed** (1 had player lookup issue)
+
+### Results with Correct Data
+| Category | Count | Settled | P/L |
+|----------|-------|---------|-----|
+| Would STILL take | 31 | 5W-6L | +1.88u |
+| Would SKIP (insufficient data) | 44 | 8W-12L | +2.00u |
+
+### Why 44 Would Be Skipped
+These bets involve lower-tier Challenger/ITF players who genuinely don't have enough match history in our database. With `has_data=False`, the model returns 50% probability and the bet doesn't qualify for any model.
+
+### Impact Summary
+- **Actual P/L:** +3.88u from 40.5u staked (9.6% ROI)
+- **Corrected P/L:** +1.88u from 21.0u staked (8.9% ROI)
+- **Skipped bets contribution:** +2.00u (lucky variance - can't rely on bets with no data)
+
+### Key Insight
+The "should skip" bets performed well due to variance, but they were essentially coin flips with no analytical edge. Going forward, the system will correctly identify these low-data situations.
+
+---
+
+## Files Changed (Session Summary)
+- `src/config.py` - Centralized surface detection
+- `src/betfair_capture.py` - Uses centralized surface
+- `src/betfair_tennis.py` - Uses centralized surface
+- `src/tennis_explorer_scraper.py` - Uses centralized surface
+- `src/te_import_dialog.py` - Uses centralized surface
+- `src/database.py` - Improved player name matching
+- All synced to `dist/TennisBettingSystem/`
+
+## Database Fixes
+- 51 upcoming matches: Surface corrected
+- 5,401 historical matches: Surface corrected (1,118→Clay, 4,283→Hard)
+- 4,165 stale surface stats: Deleted (will recalculate fresh)
+
+---
+
+---
+
+## Player Profile Feature Added
+
+### What Was Done
+Added comprehensive player profiles to the Database Management UI.
+
+### Player Profile Now Shows
+
+**Basic Info (compact row)**
+- ID, Name, Ranking, ELO, Total Matches
+
+**Surface Performance**
+- Hard/Clay/Grass: X matches | XX.X% win rate | Data: ✓/✗
+- Color-coded: Green (60%+), Normal (45-60%), Red (<45%)
+
+**Current Status**
+- Days Since Match: "Today" / "Yesterday" / "X days ago"
+- Fatigue: Status with score (Fresh/Good/Moderate/Heavy)
+- Matches (7d): count
+- Matches (30d): count
+
+**Notable Results**
+- Best Win: Highest-ranked opponent beaten with date
+- Worst Loss: Lowest-ranked opponent lost to with date
+
+**Recent Matches (Last 10)**
+- Color-coded: Green for wins, Red for losses
+- Shows date, surface, opponent, opponent rank, tournament
+- Form summary: XW-YL (Z%)
+
+**Aliases** (compact section at bottom)
+- Small list with count
+
+### Example: Tristan Boyer
+```
+Ranking: #181 | ELO: 1375
+Fatigue: Fresh (94) | Days: 12 | 7d: 0 | 30d: 4
+Best Win: #88 James Duckworth (2025-08-25)
+Worst Loss: #1318 Duje Markovina (2025-12-07)
+Hard: 15 matches | 26.7% win rate
+```
+
+### Files Changed
+- `src/database_ui.py` - Complete redesign of player details panel
+- Synced to `dist/TennisBettingSystem/`
+
+---
+
+## Match to Watch: Boyer vs Samuel
+
+### The Question
+Does raw surface win rate mislead when players compete at different levels?
+
+### The Match
+- **Tristan Boyer (#181)** vs **Toby Samuel (#251)**
+- San Diego CA Challenger, Hard court
+- Odds: Boyer 2.44 / Samuel 1.65
+
+### Model Says
+- Boyer: 40.4%
+- Samuel: 59.6%
+- Surface factor heavily favors Samuel (-0.614)
+
+### Opponent Quality Analysis Says
+- Samuel's 88% hard court win rate is against #500-#1400 players (Futures)
+- Samuel loses to anyone decent: #189, #252, #366, #371, #570
+- Boyer (#181) is better than everyone Samuel has lost to
+- **Conclusion:** Boyer is probably the better player despite lower surface win rate
+
+### What to Watch For
+- If Boyer wins: Surface stats may need opponent quality weighting
+- If Samuel wins: Raw surface stats may be valid signal
+
+### Result
+*TBD - Update after match*
+
+---
+
 ## Repository
 - **Local:** `C:\Users\marca\OneDrive\Documents\claude-playground\tennis betting`
 - **Run App:** `python src\main.py`
 - **Monitor:** `python local_monitor.py` (or use start_monitor.vbs)
 - **Installer:** `installer_output\TennisBettingSystem_Setup_1.4.6.exe`
-- **Version:** 1.4.6
+- **Version:** 2.0 (GitHub)
+- **GitHub:** https://github.com/Anners92/tennis-betting-system
+
+---
+
+## Tournament Surface Fixes (Wikipedia Comparison)
+
+### What Was Done
+Comprehensive review of all tournament surfaces against Wikipedia's List of Tennis Tournaments.
+
+### Changes Made
+
+#### Full Database Refresh
+- Changed refresh from 6 months to 12 months (`github_data_loader.py`)
+- Now have **63,919 matches** from 1,033 tournaments
+
+#### Samuel's Clay Matches Fixed
+- 4 Futures matches (Jul 30 - Aug 2, 2025) updated from Hard → Clay
+- Opponents: Casanova, De Krom, Taileu, Nesterov
+
+#### Grass Courts Fixed (June/July events only)
+- Wimbledon, Queen's Club, Halle, Eastbourne
+- Hertogenbosch, Bad Homburg, Birmingham
+- Ilkley, Nottingham, Mallorca (June only), Newport RI
+- Stuttgart (June only)
+
+#### South American Clay Fixed
+- Antofagasta, Montevideo, Sevilla, Valencia WTA
+- Tucuman, Rosario, Villa Maria, Kitzbühel
+- Oeiras (spring), Bogotá, Costa do Sauipe
+- Curitiba, Florianopolis, Santos, Porto Alegre
+- Temuco, Quito
+
+#### European Clay Fixed
+- Portuguese: Braga, Maia, Porto, Lisbon
+- French: Aix-en-Provence
+- Italian: Genoa, Cordenons
+- Finnish: Tampere
+- Tunisian: Tunis
+- Bosnian: Banja Luka
+- Romanian: Cluj-Napoca
+- Mexican: San Luis Potosi
+
+#### US Clay Fixed
+- Tallahassee
+
+### Wikipedia Comparison Fixes (Final Batch)
+| Tournament | Matches | Old Surface | New Surface |
+|------------|---------|-------------|-------------|
+| Stuttgart (June) | 38 | Hard | Grass |
+| Tallahassee | 46 | Hard | Clay |
+| Tampere | 46 | Hard | Clay |
+| Tunis | 46 | Hard | Clay |
+| Genoa | 44 | Hard | Clay |
+| Cordenons | 101 | Hard | Clay |
+| Banja Luka | 18 | Hard | Clay |
+| San Luis Potosi | 40 | Hard | Clay |
+| Cluj-Napoca | 72 | Hard | Clay |
+
+### Final Surface Breakdown
+| Surface | Matches |
+|---------|---------|
+| Hard | 55,231 |
+| Clay | 7,514 |
+| Grass | 1,174 |
+
+### Database Copied to Installer
+- Corrected database copied to `dist\TennisBettingSystem\data\tennis_betting.db`
+- Size: 16.2 MB
+- Ready for installer rebuild
+
+---
+
+## BUG FIX: Surface has_data Always False
+
+### The Problem
+Surface stats showed `has_data: false` for all players despite having 50+ matches in the database. This caused the surface factor to be set to 0 (neutral) in all match analyses.
+
+### Root Cause
+In `match_analyzer.py` line 241, `has_data` only checked `career_matches` (from the `player_surface_stats` table which was cleared earlier). It ignored `recent_matches_count` which had valid data.
+
+```python
+# Before (broken)
+"has_data": career_matches >= 5
+
+# After (fixed)
+"has_data": (career_matches >= 5) or (recent_matches_count >= 5)
+```
+
+### Impact
+- Boyer vs Samuel analysis changed from 49.5%-50.5% to **46.4%-53.6%**
+- Surface factor now correctly shows -0.205 (favoring Samuel's 66.1% vs Boyer's 45.6%)
+
+### Files Changed
+- `src/match_analyzer.py` - Fixed `has_data` check
+- `src/database_ui.py` - Fixed player profile surface display
+- Synced to `dist/TennisBettingSystem/`
+
+---
+
+## Database Cleanup & Surface Fixes (Continued Session)
+
+### Match History Cleanup
+- Deleted matches older than 12 months (cutoff: 2025-01-27)
+- Only 65 matches removed
+- Database now strictly 12 months: 2025-01-27 to 2026-01-27
+
+### Additional Surface Fixes
+
+| Tournament | Change | Matches |
+|------------|--------|---------|
+| Stuttgart (April WTA) | Hard → Clay | 39 |
+| Contrexeville WTA | Hard → Clay | 37 |
+| Birmingham challenger (June) | Hard → Grass | 49 |
+| Newport challenger (July) | Hard → Grass | 41 |
+| Winston Salem (earlier fix) | Clay → Hard | 107 |
+
+### Final Database Stats
+- **Total matches:** 63,854
+- **Date range:** 2025-01-27 to 2026-01-27 (exactly 12 months)
+- **Surfaces:** Hard: 55,127 | Clay: 7,464 | Grass: 1,263
+
+### Files Updated
+- Database copied to `dist\TennisBettingSystem\data\tennis_betting.db` (16.2 MB)
+
+---
+
+## NEW FEATURE: Tournament Profile Tab
+
+### What Was Added
+Added a "Tournaments" tab to the Database Management UI, allowing users to view tournament profiles.
+
+### Tournament Profile Displays:
+1. **Basic Info**: Tournament name, Surface (color-coded), Category (Grand Slam/ATP/WTA/Challenger/ITF), Typical month played
+2. **Statistics**: Total matches, Date range, Unique players
+3. **Top Performers**: Players with most wins at this tournament
+4. **Recent Matches**: Last 15 matches with winner, loser, score (color-coded by surface)
+
+### UI Structure:
+- New tabbed interface with "Players" and "Tournaments" tabs
+- Tournament search with "Show All" option (top 200 by match count)
+- Two-panel layout: search list on left, profile on right
+
+### Files Modified:
+- `src/database_ui.py` - Added tournament tab and related methods
+- Synced to `dist/TennisBettingSystem/`
+
+### New Methods Added:
+- `_build_tournaments_tab()` - Builds tournament tab UI
+- `_search_tournaments()` - Searches tournaments by name
+- `_on_tournament_select()` - Handles tournament selection
+- `_show_tournament_details()` - Displays tournament profile
+- `_determine_category()` - Determines tournament level from name
+- `_sort_tournament_column()` - Sorts tournament treeview by column header click
+
+### Sortable Columns:
+- Tournament name (alphabetical)
+- Surface (alphabetical)
+- Match count (numeric)
+
+### Tab Height Fix:
+Fixed inconsistent tab heights when switching between Players and Tournaments tabs. The selected tab was appearing larger due to default ttk styling. Fixed by adding:
+```python
+style.map("TNotebook.Tab",
+         padding=[("selected", [20, 8]), ("!selected", [20, 8])],
+         expand=[("selected", [0, 0, 0, 0])])
+```
+
+### Auto-Sort Alphabetically:
+"Show All" button now automatically sorts tournaments A-Z by name.
+
+---
+
+## Tournament Name Merge
+
+### What Was Done
+Merged all numbered tournament variants into single entries. ITF/Challenger venues often host 10-20+ weeks of events per year, creating entries like "Antalya 5 ITF", "Antalya 6 ITF", etc.
+
+### Changes Made
+- 354 numbered tournament names merged
+- Pattern: "Location N type" → "Location type"
+- Examples:
+  - "Antalya 5 ITF" → "Antalya ITF"
+  - "Monastir 10 ITF" → "Monastir ITF"
+  - "Hersonissos 3 challenger" → "Hersonissos challenger"
+
+### Results
+| Tournament | Merged Matches |
+|------------|----------------|
+| Antalya ITF | 779 |
+| Monastir ITF | 1,557 |
+| Sharm El Sheikh ITF | 702 |
+| Santo Domingo ITF | 342 |
+| Hersonissos challenger | 267 |
+
+**Total unique tournaments: 713** (down from 1,033)
+
+---
+
+## Tournament Name Standardization (Betfair Format)
+
+### The Problem
+Betfair tournament names didn't match our historical database:
+- Betfair: "Concepcion Challenger 2026" → Database: "Concepcion challenger"
+- Betfair: "ITF San Diego" → Database: "San Diego ITF"
+
+### Changes Made
+
+**1. Historical data renamed to Betfair format:**
+- "challenger" → "Challenger" (9,750 matches)
+- "Location ITF" → "ITF Location" (21,477 matches across 341 tournaments)
+- "San Diego Challenger" → "San Diego CA Challenger" (62 matches)
+
+**2. Added `normalize_tournament_name()` in `config.py`:**
+- Strips year suffixes (2024, 2025, 2026)
+- Removes "Ladies/Men's/Women's" prefixes from Grand Slams
+- Used by betfair_capture.py on all incoming tournaments
+
+**3. Updated `betfair_capture.py`:**
+- Now applies normalization when capturing matches
+
+### Verification
+8/10 upcoming tournaments now match historical data:
+- Australian Open: 474 matches
+- Concepcion Challenger: 63 matches
+- San Diego CA Challenger: 62 matches
+- etc.
+
+2 tournaments (ITF Vero Beach, WTA Manila) are new with no history yet.
+
+### Sync Button Added
+Added "Sync Tournament Names" button to Database Management UI header.
+- Calls `db.sync_tournament_names()`
+- Updates matches, bets, and upcoming_matches tables
+- Shows summary dialog with counts per table
+
+### Auto-Sync on Betfair Capture
+Tournament name sync now runs automatically after every Betfair odds capture.
+- Added to `betfair_capture.py` after matches are saved
+- Only runs if matches were imported (imported > 0)
+- Prints sync count to console
+
+---
+
+## Player Data Quality Check
+
+### What Was Added
+New "Check Player Data" button in Database Management UI that audits all players in upcoming matches.
+
+### Features
+- Scans all players from upcoming_matches table
+- Checks match history for each player
+- Categorizes by data quality:
+  - **NO DATA** (red): 0 matches - needs investigation
+  - **LOW DATA** (orange): <5 matches - limited analysis
+  - **OK**: 5+ matches - sufficient data
+- Shows: match count, surface breakdown (Hard: X, Clay: Y), last match date
+- Double-click to jump to player profile
+- Summary shows totals per category
+
+### Files Modified
+- `src/database_ui.py` - Added button and `_check_player_data()` method
+
+---
+
+## Tournament Edit Feature
+
+### What Was Added
+1. **Tournament IDs** - Populated tournaments table with 713 unique tournaments, each with sequential ID
+2. **ID Display** - Tournament profile now shows ID number
+3. **Edit Button** - Click to edit tournament properties
+
+### Edit Dialog Features
+- **Name**: Rename tournament (cascades to matches, bets, upcoming_matches)
+- **Surface**: Change surface type (Hard/Clay/Grass) - updates all matches
+- **Category**: Set level (Grand Slam, Masters 1000, ATP, WTA, Challenger, ITF, Other)
+
+### Database Changes
+- Populated `tournaments` table with all unique tournaments from matches
+- Each tournament has: id, name, surface, level, location
+
+### Files Modified
+- `src/database_ui.py` - Added ID label, Edit button, `_edit_tournament()` method
+
+---
+
+## Player Edit Feature
+
+### What Was Added
+1. **"Show All" button** - Shows top 200 players by match count (like tournaments tab)
+2. **"Edit" button** - Edit player properties in profile
+
+### Edit Dialog Features
+- **Name**: Rename player (cascades to matches table - winner_name/loser_name)
+- **Ranking**: Update current ranking
+- **Country**: Update country code
+- **ELO**: Update ELO rating
+
+### Files Modified
+- `src/database_ui.py` - Added Show All button, Edit button, `_edit_player()` method
+
+---
+
+## Sortable Columns Added
+
+### What Was Done
+Made columns sortable in both Players and Tournaments tabs by clicking column headers.
+
+### Players Tab
+- ID, Name, Ranking, Matches columns all sortable
+- Click header to sort, click again to reverse
+
+### Tournaments Tab
+- Name, Surface, Matches columns all sortable
+- Removed LIMIT - now shows ALL tournaments and players
+
+---
+
+## Manual Bet Button Added
+
+### What Was Added
+New "Manual Bet" button on the home screen (next to "Clear Matches") that opens a dialog to analyze any two players.
+
+### Features
+- **Surface Selection**: Pick Hard, Clay, or Grass
+- **Player Search**: Type player names - auto-looks up in database
+- **Live ID Lookup**: Shows player ID and database name as you type
+- **Full Analysis**: Shows probabilities, confidence, factor breakdown
+- **Low Data Warnings**: Warns if players have <10 matches
+
+### Files Changed
+- `src/main.py` - Added "Manual Bet" button and `_open_manual_bet()` method
+
+---
+
+## Clickable Player Names in Match Analysis
+
+### What Was Added
+Player names in the match analysis window are now clickable to open their player profile.
+
+### Features
+1. **Clickable Names**: Click on "Sara Daavettila" or "Elvina Kalieva" (any player name) to open their profile popup
+2. **Low Data Warning**: If a player has <10 matches, shows "⚠ LOW DATA (X matches) - Click to edit"
+3. **Player Profile Popup**: Shows ranking, ELO, surface stats, recent matches
+4. **Edit Button**: Can open Database Management to edit the player
+
+### New Function Added
+`open_player_profile(parent, player_id, player_name)` in `database_ui.py` - standalone function that can be called from anywhere to show a player profile popup.
+
+### Files Changed
+- `src/database_ui.py` - Added `open_player_profile()` function
+- `src/bet_suggester.py` - Made player names clickable, added low data warnings
+
+---
+
+## Duplicate Match Prevention Rule
+
+### What Was Added
+Prevents betting on both players in the same match. If you already have a bet on Kovacevic v Tabur (on either player), you cannot add another bet on the same match.
+
+### Changes Made
+
+**`database.py`** - New function:
+```python
+def check_match_already_bet(self, match_description: str, tournament: str = None) -> Optional[Dict]:
+    """Check if ANY bet exists for the same match (regardless of which player was selected)."""
+```
+
+**`bet_tracker.py`** - Added check in two places:
+1. `add_bet()` method - returns -2 if match already bet
+2. `_add_bet_dialog()` - shows error dialog with existing selection
+
+### Error Message
+```
+Match Already Bet
+A bet already exists for this match.
+Tournament: [tournament]
+Match: [match]
+Existing selection: [player already bet on]
+
+You cannot bet on both players in the same match.
+```
+
+---
+
+## Bug Fixes - Import and Lambda Closure Issues
+
+### Issue 1: `NameError: name 're' is not defined`
+**Problem:** The `normalize_tournament_name()` function in `config.py` used regex (`re.sub()`) but `re` was only imported inside another function (`_word_match()`), not at the module level.
+
+**Fix:** Added `import re` at the top of `config.py`.
+
+### Issue 2: Lambda Closure Errors in Exception Handlers
+**Problem:** Both `main.py` and `betfair_capture.py` had lambdas inside exception handlers that captured the variable `e`:
+```python
+except Exception as e:
+    self.root.after(0, lambda: self._capture_error(str(e)))  # Bug!
+```
+By the time the lambda executes, `e` is out of scope, causing `NameError: cannot access free variable 'e'`.
+
+**Fix:** Capture the error message before creating the lambda:
+```python
+except Exception as e:
+    err_msg = str(e)
+    self.root.after(0, lambda msg=err_msg: self._capture_error(msg))
+```
+
+### Issue 3: Wrong Import Location for `normalize_tournament_name`
+**Problem:** `normalize_tournament_name` was imported inside `_guess_surface()` method but used in `save_to_database()` method.
+
+**Fix:** Moved import to top of `betfair_capture.py`:
+```python
+from config import normalize_tournament_name
+```
+
+### Files Changed
+- `src/config.py` - Added `import re` at module level
+- `src/main.py` - Fixed lambda closure in exception handler (line 1330)
+- `src/betfair_capture.py` - Fixed lambda closure + moved import to top level
+
+---
+
+## Data Quality Cleanup - Corrupted Player Records
+
+### The Problem
+Several players had unrealistic match counts (200-1100 matches in 12 months) due to abbreviated names being incorrectly merged:
+- "Arseneault A." had 1,120 matches (multiple "A. Arseneault" players merged)
+- "A. Stephens Sloane" had 348 matches (name reversed, duplicate of Sloane Stephens)
+- Players playing against both men AND women (impossible)
+
+### Players Cleaned
+| Player | Matches Deleted | Action |
+|--------|-----------------|--------|
+| Arseneault A. | 1,120 | Renamed to "Ariana Arseneault", matches deleted |
+| Prajwal Dev S D | 530 | Matches deleted |
+| Zanada E. | 350 | Matches deleted |
+| A. Stephens Sloane | 336 | Player deleted (duplicate of Sloane Stephens) |
+| Wen Wan I | 229 | Matches deleted |
+| Mario Gonzalez Fernandez | 200 | Matches deleted |
+| Julia Konishi Camargo Silva | 193 | Matches deleted |
+| Andrea Lazaro Garcia | 169 | Matches deleted |
+| Alejandro Hernandez Serrano Juan | 162 | Matches deleted |
+| Rodrigo Alujas | 160 | Matches deleted |
+| Mallory R. | 118 | Matches deleted |
+| Queiroz Miguel L. | 98 | Matches deleted |
+
+### Results
+- **Total matches deleted**: 3,665
+- **Total matches remaining**: 60,189
+- **Top player now**: Emiliana Arango with 147 matches (realistic)
+
+### Why This Happened
+The data import was matching abbreviated names (like "A." for first initial) to existing players, causing multiple different players to be merged into one record.
+
+---
+
+## Manual Bet Feature Improvements (Continued Session)
+
+### What Was Done
+Improved the Manual Bet feature to show the full match analysis screen like in Bet Suggester.
+
+### Changes Made (`src/main.py`)
+1. **Added searchable player dropdowns** - Users can now search for players by name and select from a dropdown list (uses `db.search_players()` instead of exact matching)
+2. **Dropdown overlays content** - Fixed layout so the suggestion dropdown floats over content instead of pushing elements down (uses Toplevel popup)
+3. **Selection persistence** - Fixed bug where player selection was cleared when text was updated
+4. **Full match analysis screen** - Clicking "Analyze" now opens the same detailed analysis view from BetSuggester:
+   - Player probabilities with color coding
+   - Factor Analysis table (8 factors)
+   - Recent matches for both players
+   - Value Analysis section
+   - Analysis Summary
+
+### Technical Details
+- Uses `BetSuggesterUI._show_match_analysis()` method to display the full analysis
+- Main BetSuggesterUI window is minimized (iconified) so only the analysis popup shows
+- Player search uses `db.search_players()` for fuzzy LIKE matching
+- Dropdown implemented as `tk.Toplevel` with `overrideredirect(True)` for floating overlay
+
+### Files Changed
+- `src/main.py`:
+  - Updated `_open_manual_bet()` with searchable player selection
+  - Added `_show_manual_analysis()` helper method (backup version)
+  - Added `_get_factor_display()` and `_show_recent_matches()` helper methods
+
+### How It Works
+1. Open Manual Bet from home screen
+2. Type player name (minimum 2 characters)
+3. Select player from dropdown list
+4. Repeat for second player
+5. Choose surface
+6. Click Analyze → Full match analysis popup opens
+
+### Analysis Window Contents
+The manual analysis popup now shows:
+- **Header**: Player names with probabilities (color-coded green for favorite, gray for underdog)
+- **Factor Analysis**: 8-factor breakdown with scores and contribution
+- **Recent Matches**: Last 5 matches for each player (color-coded wins/losses)
+- **Value Analysis**: Shows N/A for Betfair odds, Edge, Expected Value (since manual entry has no odds data)
+- **Analysis Summary**: Model favored player, top 3 key factors, confidence level
+
+### Window Management
+- Uses `dialog.lift()` and `dialog.focus_force()` to ensure popup appears front and center
+- Standalone implementation (`_show_manual_analysis()`) that doesn't depend on BetSuggesterUI
+
+---
+
+## Installer Rebuilt (v2.0)
+
+### What Was Done
+Built new installer with all session changes including Manual Bet improvements.
+
+### Build Process
+1. `python build_exe.py` - PyInstaller build
+2. OneDrive file lock workaround: `shutil.copytree()` with `dirs_exist_ok=True`
+3. `ISCC.exe installer.iss` - Inno Setup compiler
+
+### Output
+- **File:** `installer_output\TennisBettingSystem_Setup_2.0.exe`
+- **Version:** 2.0
+
+### Changes Included
+- Manual Bet feature with searchable player dropdowns
+- Full match analysis popup (Factor Analysis, Value Analysis, Summary)
+- All surface detection fixes
+- Tournament name normalization
+- Player profile and tournament profile features
+- Database UI improvements (sortable columns, edit features)
+
+---
+
+## Session Summary
+
+### Key Accomplishments Today
+1. **Manual Bet Feature** - Complete implementation with searchable dropdowns and full analysis popup
+2. **Surface Detection** - Centralized in config.py, fixed 5,400+ matches with wrong surfaces
+3. **Player Name Matching** - Improved algorithm to prevent false matches
+4. **Tournament Profiles** - New tab in Database Management
+5. **Data Quality** - Cleaned corrupted player records (3,665 matches)
+6. **Installer** - v2.0 built with all changes
+
+### Files Modified
+- `src/main.py` - Manual Bet feature
+- `src/config.py` - Surface detection, tournament normalization
+- `src/database.py` - Player name matching improvements
+- `src/database_ui.py` - Tournament tab, player profiles, edit features
+- `src/betfair_capture.py` - Surface detection, tournament sync
+- `src/match_analyzer.py` - Fixed has_data check
+
+---

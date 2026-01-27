@@ -25,7 +25,7 @@ class GitHubDataLoader:
             data_dir = DATA_DIR
         self.data_dir = data_dir
         self.progress_callback: Optional[Callable] = None
-        self.months_to_fetch = 6  # Default: fetch 6 months of data
+        self.months_to_fetch = 12  # Default: fetch 12 months of data
 
     def set_progress_callback(self, callback: Callable):
         """Set callback for progress updates."""

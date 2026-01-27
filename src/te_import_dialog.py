@@ -845,18 +845,10 @@ class TennisExplorerImportDialog:
 
         return imported, skipped
 
-    def _guess_surface(self, tournament: str) -> str:
-        """Guess surface from tournament name."""
-        tournament_lower = tournament.lower()
-
-        if any(x in tournament_lower for x in ['clay', 'roland', 'rome', 'madrid', 'barcelona']):
-            return 'Clay'
-        elif any(x in tournament_lower for x in ['grass', 'wimbledon', 'halle', 'queens']):
-            return 'Grass'
-        elif any(x in tournament_lower for x in ['carpet']):
-            return 'Carpet'
-        else:
-            return 'Hard'
+    def _guess_surface(self, tournament: str, date_str: str = None) -> str:
+        """Guess surface from tournament name using centralized detection."""
+        from config import get_tournament_surface
+        return get_tournament_surface(tournament, date_str)
 
     def _clear(self):
         """Clear the form."""

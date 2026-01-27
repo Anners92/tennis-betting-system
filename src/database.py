@@ -613,6 +613,10 @@ class TennisDatabase:
 
         Prefers real ATP/WTA players (positive IDs with rankings) over auto-created players.
         Uses name_mappings.json for custom name translations.
+
+        IMPORTANT: This function handles different name formats:
+        - Betfair: "Frederico Ferreira Silva" (FirstName LastName)
+        - Database: "Ferreira Silva Frederico" (LastName FirstName)
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -649,86 +653,123 @@ class TennisDatabase:
                 pass  # name_matcher not available
 
             # Normalize name: remove hyphens (Betfair uses "Auger-Aliassime", DB has "Auger Aliassime")
-            name_normalized = name.replace('-', ' ')
+            name_normalized = name.replace('-', ' ').strip()
+            parts = name_normalized.split()
 
-            # Strategy 1: Exact match - prefer ranked players with positive IDs
+            # Strategy 1: Exact match (case-insensitive)
             cursor.execute(
                 """SELECT * FROM players WHERE LOWER(name) = LOWER(?)
                    ORDER BY
                        CASE WHEN id > 0 AND current_ranking IS NOT NULL THEN 0 ELSE 1 END,
                        COALESCE(current_ranking, 999999) ASC
                    LIMIT 1""",
-                (name,)
+                (name_normalized,)
             )
             row = cursor.fetchone()
             if row:
                 result = dict(row)
-                # If it's a real player (positive ID), return immediately
                 if result['id'] > 0:
                     return result
-                # If auto-created, save as fallback but keep searching
                 fallback_result = result
 
-            # Strategy 2: Partial match with full name (real players only)
-            # Try both original name and normalized (hyphens removed)
-            cursor.execute(
-                """SELECT * FROM players
-                   WHERE id > 0 AND (name LIKE ? OR name LIKE ?)
-                   ORDER BY COALESCE(current_ranking, 999999) ASC
-                   LIMIT 1""",
-                (f"%{name}%", f"%{name_normalized}%")
-            )
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
-
-            # Strategy 3: Match first name + last name (allows middle names)
-            # e.g., "Joao Schiessl" matches "Joao Eduardo Schiessl"
-            parts = name.strip().split()
+            # Strategy 2: Try reversed name order (handles DB format "LastName FirstName")
+            # For "Frederico Ferreira Silva" try "Ferreira Silva Frederico"
             if len(parts) >= 2:
-                first_name = parts[0]
-                last_name = parts[-1]
-                # Try: first_name%last_name (with anything in between)
+                # Try moving first name to end: "A B C" -> "B C A"
+                reversed_name = ' '.join(parts[1:]) + ' ' + parts[0]
                 cursor.execute(
-                    """SELECT * FROM players
-                       WHERE id > 0 AND name LIKE ?
-                       ORDER BY COALESCE(current_ranking, 999999) ASC
-                       LIMIT 1""",
-                    (f"{first_name}%{last_name}",)
+                    """SELECT * FROM players WHERE id > 0 AND LOWER(name) = LOWER(?)
+                       ORDER BY COALESCE(current_ranking, 999999) ASC LIMIT 1""",
+                    (reversed_name,)
                 )
                 row = cursor.fetchone()
                 if row:
                     return dict(row)
 
-            # Strategy 4: Try LastName FirstName format (common in ATP data)
-            # e.g., "Christopher O'Connell" matches "O'Connell Christopher"
-            if len(parts) >= 2:
+                # Also try full reversal: "A B C" -> "C B A"
+                full_reversed = ' '.join(parts[::-1])
                 cursor.execute(
-                    """SELECT * FROM players
-                       WHERE id > 0 AND (name LIKE ? OR name LIKE ?)
-                       ORDER BY COALESCE(current_ranking, 999999) ASC
-                       LIMIT 1""",
-                    (f"{last_name}%{first_name}%", f"{last_name} {first_name}%")
+                    """SELECT * FROM players WHERE id > 0 AND LOWER(name) = LOWER(?)
+                       ORDER BY COALESCE(current_ranking, 999999) ASC LIMIT 1""",
+                    (full_reversed,)
                 )
                 row = cursor.fetchone()
                 if row:
                     return dict(row)
 
-            # Strategy 5: Match by last name only (common for tennis)
+            # Strategy 3: All name parts must be present (in any order)
+            # This is safer than partial matching
             if len(parts) >= 2:
-                last_name = parts[-1]
-                # Only use last name if it's reasonably unique (>3 chars)
-                if len(last_name) > 3:
-                    cursor.execute(
-                        """SELECT * FROM players
-                           WHERE id > 0 AND name LIKE ?
-                           ORDER BY COALESCE(current_ranking, 999999) ASC
-                           LIMIT 1""",
-                        (f"% {last_name}",)  # Space before to match word boundary
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        return dict(row)
+                # Build query that requires ALL parts to be in the name
+                conditions = ' AND '.join(['LOWER(name) LIKE ?' for _ in parts])
+                params = [f'%{p.lower()}%' for p in parts]
+
+                cursor.execute(
+                    f"""SELECT * FROM players
+                       WHERE id > 0 AND {conditions}
+                       ORDER BY COALESCE(current_ranking, 999999) ASC
+                       LIMIT 1""",
+                    params
+                )
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+
+            # Strategy 4: First and last name in any order (for 2-part names)
+            if len(parts) == 2:
+                first, last = parts[0], parts[1]
+                # Try both orders with exact word matching
+                cursor.execute(
+                    """SELECT * FROM players
+                       WHERE id > 0 AND (
+                           (LOWER(name) LIKE ? AND LOWER(name) LIKE ?) OR
+                           LOWER(name) = LOWER(?)
+                       )
+                       ORDER BY COALESCE(current_ranking, 999999) ASC
+                       LIMIT 1""",
+                    (f'%{first}%', f'%{last}%', f'{last} {first}')
+                )
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+
+            # Strategy 5: Fuzzy match using all candidates (last resort)
+            # Only for names with 2+ parts, and require high similarity
+            if len(parts) >= 2:
+                try:
+                    from name_matcher import name_matcher
+                    from difflib import SequenceMatcher
+
+                    # Get potential candidates - search by each name part
+                    candidates = []
+                    for part in parts:
+                        if len(part) >= 3:  # Only search reasonably long parts
+                            cursor.execute(
+                                """SELECT id, name, current_ranking FROM players
+                                   WHERE id > 0 AND LOWER(name) LIKE ?
+                                   ORDER BY COALESCE(current_ranking, 999999) ASC
+                                   LIMIT 20""",
+                                (f'%{part.lower()}%',)
+                            )
+                            candidates.extend([dict(r) for r in cursor.fetchall()])
+
+                    # Deduplicate candidates
+                    seen = set()
+                    unique_candidates = []
+                    for c in candidates:
+                        if c['id'] not in seen:
+                            seen.add(c['id'])
+                            unique_candidates.append(c)
+
+                    # Find best fuzzy match with high threshold (0.85)
+                    best_match = name_matcher.find_best_match(name, unique_candidates, threshold=0.85)
+                    if best_match:
+                        cursor.execute("SELECT * FROM players WHERE id = ?", (best_match['id'],))
+                        row = cursor.fetchone()
+                        if row:
+                            return dict(row)
+                except ImportError:
+                    pass
 
             # If no real player found, return the auto-created fallback (if any)
             return fallback_result
@@ -852,6 +893,83 @@ class TennisDatabase:
             cursor.execute("SELECT * FROM tournaments WHERE id = ?", (tournament_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def sync_tournament_names(self) -> Dict[str, int]:
+        """
+        Sync tournament names across all tables to use consistent Betfair naming.
+
+        Applies these transformations:
+        - Capitalize 'challenger' to 'Challenger'
+        - Move 'ITF' from suffix to prefix ('Location ITF' -> 'ITF Location')
+        - Strip year suffixes (2024, 2025, 2026, etc.)
+        - Remove Grand Slam prefixes (Ladies/Men's/Women's)
+        - Merge numbered tournaments ('Antalya 5 ITF' -> 'ITF Antalya')
+
+        Returns:
+            Dict with counts of updates per table
+        """
+        import re
+
+        results = {'matches': 0, 'bets': 0, 'upcoming_matches': 0}
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            for table in ['matches', 'bets', 'upcoming_matches']:
+                # Get all unique tournament names
+                try:
+                    cursor.execute(f'SELECT DISTINCT tournament FROM {table}')
+                    tournaments = [row[0] for row in cursor.fetchall() if row[0]]
+                except:
+                    continue
+
+                for old_name in tournaments:
+                    new_name = old_name
+
+                    # 1. Strip year suffixes (2020-2039)
+                    new_name = re.sub(r'\s+20[2-3]\d$', '', new_name)
+
+                    # 2. Remove Grand Slam prefixes
+                    new_name = re.sub(r"^Ladies\s+", "", new_name)
+                    new_name = re.sub(r"^Men's\s+", "", new_name)
+                    new_name = re.sub(r"^Women's\s+", "", new_name)
+
+                    # 3. Capitalize 'challenger'
+                    new_name = re.sub(r'\bchallenger\b', 'Challenger', new_name, flags=re.IGNORECASE)
+
+                    # 4. Move ITF from suffix to prefix
+                    if re.search(r'\sITF$', new_name):
+                        location = re.sub(r'\s+ITF$', '', new_name)
+                        new_name = f'ITF {location}'
+
+                    # 5. Merge numbered tournaments ('Antalya 5 ITF' -> 'ITF Antalya')
+                    # Pattern: 'Location N ITF/Challenger/WTA' where N is a number
+                    match = re.match(r'^(.+?)\s+\d{1,2}\s+(ITF|Challenger|WTA|ATP)$', new_name, re.IGNORECASE)
+                    if match:
+                        location = match.group(1)
+                        level = match.group(2)
+                        if level.upper() == 'ITF':
+                            new_name = f'ITF {location}'
+                        else:
+                            new_name = f'{location} {level}'
+
+                    # Also handle 'ITF Location N' format
+                    match = re.match(r'^ITF\s+(.+?)\s+\d{1,2}$', new_name)
+                    if match:
+                        location = match.group(1)
+                        new_name = f'ITF {location}'
+
+                    new_name = new_name.strip()
+
+                    # Update if changed
+                    if old_name != new_name:
+                        cursor.execute(f'UPDATE {table} SET tournament = ? WHERE tournament = ?',
+                                      (new_name, old_name))
+                        results[table] += cursor.rowcount
+
+            conn.commit()
+
+        return results
 
     # =========================================================================
     # MATCH CRUD
@@ -1496,6 +1614,33 @@ class TennisDatabase:
                     WHERE match_description = ? AND selection = ? AND result IS NULL
                     LIMIT 1
                 """, (match_description, selection))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def check_match_already_bet(self, match_description: str, tournament: str = None) -> Optional[Dict]:
+        """Check if ANY bet exists for the same match (regardless of which player was selected).
+
+        This prevents betting on both sides of the same match.
+        Returns the existing bet if found, None otherwise.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            if tournament:
+                # Check by tournament + match description
+                cursor.execute("""
+                    SELECT * FROM bets
+                    WHERE tournament = ? AND match_description = ?
+                    LIMIT 1
+                """, (tournament, match_description))
+            else:
+                # Fallback to just match description
+                cursor.execute("""
+                    SELECT * FROM bets
+                    WHERE match_description = ?
+                    LIMIT 1
+                """, (match_description,))
+
             row = cursor.fetchone()
             return dict(row) if row else None
 
