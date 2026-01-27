@@ -87,7 +87,7 @@ python -c "import shutil; shutil.copytree(r'C:\Users\marca\AppData\Local\Temp\te
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "C:\Users\marca\OneDrive\Documents\claude-playground\tennis betting\installer.iss"
 ```
 
-**Output:** `installer_output\TennisBettingSystem_Setup_1.1.0.exe`
+**Output:** `installer_output\TennisBettingSystem_Setup_2.0.exe`
 
 ---
 
@@ -294,10 +294,39 @@ The app includes certifi. If downloads fail, check internet connection.
 
 ---
 
+## GitHub Repository
+
+**Repository:** https://github.com/Anners92/tennis-betting-system (private)
+
+### After Building, Push to GitHub
+
+```cmd
+cd "C:\Users\marca\OneDrive\Documents\claude-playground\tennis betting"
+git add -A
+git commit -m "Release vX.X.X - description"
+git push
+```
+
+### Create a GitHub Release with Installer
+
+```cmd
+gh release create vX.X.X "installer_output/TennisBettingSystem_Setup_X.X.exe" --title "Tennis Betting System vX.X.X" --notes "Release notes here"
+```
+
+---
+
 ## Current Version
 
-**Version:** 1.4.6
-**Last Updated:** January 26, 2026
+**Version:** 2.0.0
+**Last Updated:** January 27, 2026
+**GitHub:** https://github.com/Anners92/tennis-betting-system/releases/tag/v2.0.0
+
+### v2.0.0 Changes
+- Fixed bet editing bug - user edits now persist (date sync skip on all user actions)
+- Fixed auto mode missing bets - now resolves player IDs using name_matcher
+- Added Assets folder to build for taskbar icon
+- Added GitHub repository integration
+- Skips doubles matches in auto mode
 
 ### v1.4.6 Changes (Major Refactor)
 - Simplified to 4 models only: M3, M4, M7, M8
