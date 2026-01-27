@@ -1349,4 +1349,10 @@ Built new installer with all session changes including Manual Bet improvements.
 - `src/betfair_capture.py` - Surface detection, tournament sync
 - `src/match_analyzer.py` - Fixed has_data check
 
+### Build & Release
+- **Installer:** `installer_output\TennisBettingSystem_Setup_2.1.exe`
+- **Version:** 2.1.0
+- **Commit:** `eb9dd3a` - "Release v2.1.0 - Manual Bet, Surface Fixes, Tournament Profiles"
+- **Pushed to GitHub:** https://github.com/Anners92/tennis-betting-system
+
 ---
