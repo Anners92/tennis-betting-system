@@ -76,7 +76,8 @@ class BacktestRunner:
 
     def __init__(self, modules: dict, sample_size: int = 0,
                  months: int = 6, from_date: str = None, to_date: str = None,
-                 output_csv: bool = True, checkpoint_interval: int = 500):
+                 output_csv: bool = True, checkpoint_interval: int = 500,
+                 odds_path: str = None):
         self.modules = modules
         self.db = modules['default_db']
         self.analyzer = modules['MatchAnalyzer'](self.db)
@@ -95,6 +96,17 @@ class BacktestRunner:
         self.results: List[Dict] = []
         self.errors: List[Dict] = []
         self.start_time = None
+
+        # Load historical odds lookup
+        self.odds_lookup = {}
+        self.odds_source_counts = {'real': 0, 'proxy': 0}
+        if odds_path and Path(odds_path).exists():
+            with open(odds_path, 'r') as f:
+                data = json.load(f)
+                self.odds_lookup = data.get('odds', {})
+                meta = data.get('_meta', {})
+                print(f"  Loaded {len(self.odds_lookup)} historical odds entries")
+                print(f"  Match rate: {meta.get('match_rate', 'unknown')}")
 
     # ------------------------------------------------------------------
     # Data fetching
@@ -211,8 +223,25 @@ class BacktestRunner:
                 match['tournament'], match['date']
             )
 
-            # 3. Generate odds proxy from rankings
-            p1_odds, p2_odds = self.calculate_odds_proxy(p1_rank, p2_rank)
+            # 3. Look up real odds, fall back to proxy
+            odds_source = 'proxy'
+            match_id_str = str(match['id'])
+
+            if match_id_str in self.odds_lookup:
+                od = self.odds_lookup[match_id_str]
+                # od['w'] = winner odds, od['l'] = loser odds (from database perspective)
+                # actual_winner tells us which of p1/p2 is the database winner
+                if actual_winner == 'p1':
+                    p1_odds = od['w']
+                    p2_odds = od['l']
+                else:
+                    p1_odds = od['l']
+                    p2_odds = od['w']
+                odds_source = 'real'
+                self.odds_source_counts['real'] += 1
+            else:
+                p1_odds, p2_odds = self.calculate_odds_proxy(p1_rank, p2_rank)
+                self.odds_source_counts['proxy'] += 1
 
             # 4. Run full model analysis
             analysis = self.analyzer.calculate_win_probability(
@@ -297,6 +326,7 @@ class BacktestRunner:
                 'profit_units': round(profit, 4),
                 'confidence': round(analysis.get('confidence', 0), 4),
                 'weighted_advantage': round(analysis.get('weighted_advantage', 0), 4),
+                'odds_source': odds_source,
                 'factor_accuracy': factor_accuracy,
             }
 
@@ -397,6 +427,9 @@ class BacktestRunner:
         print()
         print(f"  Completed in {elapsed/60:.1f} minutes")
         print(f"  Processed: {len(self.results)} results, {len(self.errors)} errors")
+        if self.odds_lookup:
+            print(f"  Odds source: {self.odds_source_counts['real']} real, "
+                  f"{self.odds_source_counts['proxy']} proxy")
 
         # Generate outputs
         summary = BacktestSummary(self.results, self.errors)
@@ -431,7 +464,7 @@ class BacktestRunner:
             'p1_probability', 'predicted_winner', 'actual_winner', 'correct',
             'bet_prob', 'bet_odds', 'implied_prob', 'edge',
             'models', 'is_value_bet', 'stake_units', 'profit_units',
-            'confidence', 'weighted_advantage',
+            'confidence', 'weighted_advantage', 'odds_source',
             'factor_form', 'factor_surface', 'factor_ranking',
             'factor_h2h', 'factor_fatigue', 'factor_injury',
             'factor_recent_loss', 'factor_performance_elo', 'factor_momentum',
@@ -588,6 +621,34 @@ class BacktestSummary:
 
         return result
 
+    def odds_source_analysis(self) -> Dict:
+        """Performance breakdown by odds source (real vs proxy)."""
+        sources = {}
+        for r in self.results:
+            src = r.get('odds_source', 'proxy')
+            if src not in sources:
+                sources[src] = {'total': 0, 'correct': 0, 'bets': [], 'profit': 0}
+            sources[src]['total'] += 1
+            if r['correct']:
+                sources[src]['correct'] += 1
+            if r['stake_units'] > 0 and r.get('models', 'None') != 'None':
+                sources[src]['bets'].append(r)
+                sources[src]['profit'] += r['profit_units']
+
+        result = {}
+        for src, data in sorted(sources.items()):
+            accuracy = data['correct'] / data['total'] * 100 if data['total'] > 0 else 0
+            staked = sum(b['stake_units'] for b in data['bets'])
+            roi = (data['profit'] / staked * 100) if staked > 0 else 0
+            result[src] = {
+                'matches': data['total'],
+                'accuracy': accuracy,
+                'value_bets': len(data['bets']),
+                'profit': data['profit'],
+                'roi': roi,
+            }
+        return result
+
     def odds_range_breakdown(self) -> List[Dict]:
         """Performance by odds range."""
         ranges = [
@@ -719,6 +780,20 @@ class BacktestSummary:
                     f'{o["win_rate"]:>6.1f}% {o["profit"]:>+8.1f}u {o["roi"]:>+7.1f}%'
                 )
 
+        # Odds source breakdown (only show if we have real odds)
+        os_data = self.odds_source_analysis()
+        if len(os_data) > 1 or (len(os_data) == 1 and 'real' in os_data):
+            lines.append(f'\n{"=" * w}')
+            lines.append('  ODDS SOURCE BREAKDOWN')
+            lines.append(f'{"=" * w}')
+            lines.append(f'  {"Source":<10} {"Matches":>8} {"Accuracy":>9} {"Bets":>6} {"Profit":>9} {"ROI":>8}')
+            lines.append(f'  {"-" * 52}')
+            for src, data in sorted(os_data.items()):
+                lines.append(
+                    f'  {src:<10} {data["matches"]:>8} {data["accuracy"]:>8.1f}% '
+                    f'{data["value_bets"]:>6} {data["profit"]:>+8.1f}u {data["roi"]:>+7.1f}%'
+                )
+
         lines.append(f'\n{"=" * w}')
         return '\n'.join(lines)
 
@@ -745,6 +820,8 @@ def main():
                         help='Save checkpoint every N matches')
     parser.add_argument('--db-path', type=str, default=None,
                         help='Path to tennis_betting.db')
+    parser.add_argument('--odds-path', type=str, default=None,
+                        help='Path to odds_lookup.json for real historical odds')
     args = parser.parse_args()
 
     # Import tennis modules (must happen after args parsed for db-path)
@@ -758,6 +835,7 @@ def main():
         to_date=args.to_date,
         output_csv=not args.no_csv,
         checkpoint_interval=args.checkpoint_interval,
+        odds_path=args.odds_path,
     )
     runner.run()
 

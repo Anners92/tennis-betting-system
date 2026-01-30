@@ -35,7 +35,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install selenium beautifulsoup4 requests webdriver-manager
+          pip install selenium beautifulsoup4 requests webdriver-manager openpyxl
 
       - name: Download database from release
         run: |
@@ -56,6 +56,10 @@ jobs:
             --pattern 'unmatched_players.json' \
             --dir data/ \
             --repo ${{ github.repository }} || true
+          gh release download backtest-data \
+            --pattern 'odds_lookup.json' \
+            --dir data/ \
+            --repo ${{ github.repository }} || true
           echo "Downloaded files:"
           ls -la data/
         env:
@@ -67,6 +71,18 @@ jobs:
       - name: Create required directories
         run: mkdir -p output logs
 
+      - name: Build odds lookup (if not downloaded)
+        run: |
+          if [ ! -f data/odds_lookup.json ]; then
+            echo "Building odds lookup from tennis-data.co.uk..."
+            cd src
+            python -u odds_builder.py \
+              --db-path ${{ github.workspace }}/data/tennis_betting.db \
+              --output ${{ github.workspace }}/data/odds_lookup.json
+          else
+            echo "Using pre-built odds_lookup.json from release"
+          fi
+
       - name: Run backtest
         run: |
           cd src
@@ -74,6 +90,7 @@ jobs:
             --sample ${{ inputs.sample_size || '0' }} \
             --months ${{ inputs.months_lookback || '6' }} \
             --db-path ${{ github.workspace }}/data/tennis_betting.db \
+            --odds-path ${{ github.workspace }}/data/odds_lookup.json \
             --checkpoint-interval 500
         timeout-minutes: 350
 

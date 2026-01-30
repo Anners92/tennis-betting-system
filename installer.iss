@@ -2,7 +2,7 @@
 ; Download Inno Setup from: https://jrsoftware.org/isdl.php
 
 #define MyAppName "Tennis Betting System"
-#define MyAppVersion "2.1"
+#define MyAppVersion "2.58"
 #define MyAppPublisher "Tennis Betting"
 #define MyAppExeName "TennisBettingSystem.exe"
 
@@ -26,6 +26,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "cleandb"; Description: "Start with a clean database (0 bets). Uncheck to keep your current data."; GroupDescription: "Database:"; Flags: unchecked
 
 [Files]
 ; Include all files from the dist folder (seed database copied to Public Documents on first run)
@@ -35,6 +36,10 @@ Source: "dist\TennisBettingSystem\*"; DestDir: "{app}"; Flags: ignoreversion rec
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[InstallDelete]
+; If user chose clean database, remove existing DB so the app copies the fresh seed on first launch
+Type: files; Name: "{commondocs}\Tennis Betting System\data\tennis_betting.db"; Tasks: cleandb
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

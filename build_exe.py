@@ -60,6 +60,7 @@ def copy_source_files(src_dir: Path, dist_dir: Path):
         'database_ui.py',
         'model_analysis.py',
         'discord_notifier.py',
+        'performance_elo.py',
         'cleanup_duplicates.py',
         'delete_duplicates.py',
         'create_seed_database.py',
@@ -271,6 +272,11 @@ def build():
         shutil.copy2(name_mappings, temp_app_dir / "data" / "name_mappings.json")
         print("  Copied: data/name_mappings.json (player name mappings)")
 
+    rankings_cache = base_dir / "data" / "rankings_cache.json"
+    if rankings_cache.exists():
+        shutil.copy2(rankings_cache, temp_app_dir / "data" / "rankings_cache.json")
+        print("  Copied: data/rankings_cache.json (ATP/WTA rankings)")
+
     # Copy credentials.json if it exists
     creds_file = base_dir / "credentials.json"
     if creds_file.exists():
@@ -314,6 +320,7 @@ def build():
     print("  The installer ships with:")
     print("  - Pre-loaded database (players + match history)")
     print("  - Name mappings for Betfair player matching")
+    print("  - Rankings cache (current ATP/WTA rankings)")
     print("  - Users can start analyzing matches immediately!")
     print("\n" + "-" * 60)
     print("  BEFORE BUILDING A NEW RELEASE:")
@@ -326,8 +333,9 @@ def build():
     print("  USER DATA LOCATION (after install):")
     print("-" * 60)
     print("  C:\\Users\\Public\\Documents\\Tennis Betting System\\data\\")
-    print("  - tennis_betting.db  : Database (copied from installer on first run)")
-    print("  - name_mappings.json : Betfair name mappings")
+    print("  - tennis_betting.db    : Database (copied from installer on first run)")
+    print("  - name_mappings.json   : Betfair name mappings")
+    print("  - rankings_cache.json  : ATP/WTA rankings")
     print("-" * 60)
 
     return 0
