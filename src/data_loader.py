@@ -167,10 +167,11 @@ class DataLoader:
 
             # Compute stats from matches
             cursor.execute("""
-                INSERT INTO player_surface_stats (player_id, surface, wins, losses, win_rate)
+                INSERT INTO player_surface_stats (player_id, surface, matches_played, wins, losses, win_rate)
                 SELECT
                     player_id,
                     surface,
+                    COUNT(*) as matches_played,
                     SUM(won) as wins,
                     SUM(1 - won) as losses,
                     ROUND(CAST(SUM(won) AS FLOAT) / COUNT(*), 3) as win_rate

@@ -1,0 +1,99 @@
+name: Tennis Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample_size:
+        description: 'Number of matches to test (0 = all available)'
+        required: false
+        default: '0'
+        type: string
+      months_lookback:
+        description: 'Months of historical data to use'
+        required: false
+        default: '6'
+        type: string
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Install Python dependencies
+        run: |
+          pip install selenium beautifulsoup4 requests webdriver-manager
+
+      - name: Download database from release
+        run: |
+          mkdir -p data
+          gh release download backtest-data \
+            --pattern 'tennis_betting.db' \
+            --dir data/ \
+            --repo ${{ github.repository }}
+          gh release download backtest-data \
+            --pattern 'rankings_cache.json' \
+            --dir data/ \
+            --repo ${{ github.repository }} || true
+          gh release download backtest-data \
+            --pattern 'name_mappings.json' \
+            --dir data/ \
+            --repo ${{ github.repository }} || true
+          gh release download backtest-data \
+            --pattern 'unmatched_players.json' \
+            --dir data/ \
+            --repo ${{ github.repository }} || true
+          echo "Downloaded files:"
+          ls -la data/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set data directory
+        run: echo "TENNIS_DATA_DIR=${{ github.workspace }}/data" >> $GITHUB_ENV
+
+      - name: Create required directories
+        run: mkdir -p output logs
+
+      - name: Run backtest
+        run: |
+          cd src
+          python -u cloud_backtester.py \
+            --sample ${{ inputs.sample_size || '0' }} \
+            --months ${{ inputs.months_lookback || '6' }} \
+            --db-path ${{ github.workspace }}/data/tennis_betting.db \
+            --checkpoint-interval 500
+        timeout-minutes: 350
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backtest-results-${{ github.run_number }}
+          path: |
+            src/backtest_results_*.csv
+            src/backtest_summary_*.txt
+            src/backtest_checkpoint.json
+          retention-days: 90
+
+      - name: Print summary
+        if: always()
+        run: |
+          if ls src/backtest_summary_*.txt 1>/dev/null 2>&1; then
+            echo "===== BACKTEST SUMMARY ====="
+            cat src/backtest_summary_*.txt
+          else
+            echo "No summary file generated"
+          fi

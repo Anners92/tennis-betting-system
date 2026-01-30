@@ -744,6 +744,14 @@ class MainApplication:
         except Exception as e:
             print(f"Error updating refresh display: {e}")
 
+    def _start_refresh_label_timer(self):
+        """Update the refresh label every 60 seconds so 'Xm ago' stays accurate."""
+        try:
+            self._update_last_refresh_display()
+        except Exception:
+            pass
+        self.root.after(60000, self._start_refresh_label_timer)
+
     def _create_quick_actions(self, parent):
         """Create quick action buttons."""
         actions_frame = tk.Frame(parent, bg=self.BG_DARK)
@@ -770,6 +778,7 @@ class MainApplication:
                                            fg=self.TEXT_MUTED, font=('Segoe UI', 8))
         self.last_refresh_label.pack(side=tk.LEFT, padx=(5, 15))
         self._update_last_refresh_display()
+        self._start_refresh_label_timer()
 
         ModernButton(left, "TE Import", self._open_te_import,
                     color=self.ACCENT_PRIMARY, width=100, height=38, font_size=10).pack(side=tk.LEFT, padx=(0, 10))
@@ -830,10 +839,26 @@ class MainApplication:
                                         bg=self.BG_DARK, fg=self.TEXT_MUTED, font=('Segoe UI', 8))
         self.bg_status_label.pack(side=tk.LEFT)
 
-        # Data source info
-        tk.Label(footer, text="Data: GitHub (ATP/WTA 2019+)  |  Pre-Match Only",
+        # Data source info + checksum
+        checksum = self._compute_checksum()
+        tk.Label(footer, text=f"Data: GitHub (ATP/WTA 2019+)  |  Pre-Match Only  |  {checksum}",
                 bg=self.BG_DARK, fg=self.TEXT_MUTED,
                 font=('Segoe UI', 9)).pack(side=tk.RIGHT)
+
+    def _compute_checksum(self) -> str:
+        """Compute a short checksum from key source files for version verification."""
+        import hashlib
+        h = hashlib.md5()
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        for fname in sorted(['config.py', 'match_analyzer.py', 'bet_suggester.py',
+                              'main.py', 'bet_tracker.py', 'database.py']):
+            fpath = os.path.join(app_dir, fname)
+            try:
+                with open(fpath, 'rb') as f:
+                    h.update(f.read())
+            except FileNotFoundError:
+                pass
+        return h.hexdigest()[:8].upper()
 
     def _update_bg_status(self, text, is_updating=False):
         """Update the background updater status display."""
@@ -1040,7 +1065,7 @@ class MainApplication:
                     loader.compute_surface_stats()
 
                     update_progress(f"Import complete!", 100)
-                    dialog.after(100, self._update_stats)
+                    self.root.after(100, self._update_stats)
 
                 except Exception as e:
                     dialog.after(0, lambda: log_message(f"Error: {e}"))
@@ -1134,8 +1159,8 @@ class MainApplication:
                         update_progress(f"  Players in database: {result.get('players_in_db', result.get('players', 0))}")
                         # Record the refresh timestamp
                         db.set_last_refresh('full')
-                        dialog.after(100, self._update_stats)
-                        dialog.after(100, self._update_last_refresh_display)
+                        self.root.after(100, self._update_stats)
+                        self.root.after(100, self._update_last_refresh_display)
                     else:
                         update_progress(f"Refresh failed: {result.get('message', 'Unknown error')}")
 
@@ -1225,10 +1250,25 @@ class MainApplication:
                         update_progress(f"  Matches imported: {result.get('matches_imported', 0)}")
                         if result.get('matches_skipped', 0) > 0:
                             update_progress(f"  Matches skipped: {result.get('matches_skipped', 0)} (unknown players)")
-                        # Record the refresh timestamp
+
+                        # Record the refresh timestamp immediately after success
                         db.set_last_refresh('quick')
-                        dialog.after(100, self._update_stats)
-                        dialog.after(100, self._update_last_refresh_display)
+                        self.root.after(100, self._update_stats)
+                        self.root.after(100, self._update_last_refresh_display)
+
+                        # Recalculate surface stats after importing new matches
+                        update_progress("Recalculating surface statistics...")
+                        stats_count = db.recalculate_all_surface_stats()
+                        update_progress(f"  Surface stats updated: {stats_count} records")
+
+                        # Recalculate Performance Elo ratings
+                        try:
+                            update_progress("Recalculating Performance Elo ratings...")
+                            from performance_elo import recalculate_all_performance_elo
+                            perf_elo_count = recalculate_all_performance_elo(db, update_progress)
+                            update_progress(f"  Performance Elo updated: {perf_elo_count} players")
+                        except Exception as elo_err:
+                            update_progress(f"  Performance Elo error: {elo_err}")
                     else:
                         update_progress(f"\nQuick refresh failed")
 
@@ -1987,9 +2027,17 @@ class MainApplication:
                 if batch_key in added_this_batch:
                     continue
 
-                # Check for duplicate in database
+                # Check for duplicate in database (same selection)
                 if db.check_duplicate_bet(match_description, selection, match_date, tournament):
                     continue
+
+                # Check if ANY bet already exists on this match (prevents betting both sides)
+                if db.check_match_already_bet(match_description, tournament):
+                    print(f"BLOCKED (match already bet): {match_description}")
+                    continue
+
+                # Get recommended stake
+                recommended_stake = bet_info.get('recommended_units', 1)
 
                 # Prepare bet data
                 db_bet = {
@@ -2000,7 +2048,7 @@ class MainApplication:
                     'player2': match.get('player2', ''),
                     'market': 'Match Winner',
                     'selection': selection,
-                    'stake': bet_info.get('recommended_units', 1),
+                    'stake': recommended_stake,
                     'odds': bet_info.get('odds'),
                     'our_probability': bet_info.get('our_probability'),
                     'implied_probability': bet_info.get('implied_probability'),

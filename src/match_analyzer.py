@@ -15,8 +15,11 @@ from config import (
     FORM_SETTINGS, SURFACE_SETTINGS, FATIGUE_SETTINGS,
     BETTING_SETTINGS, SET_BETTING, KELLY_STAKING, LOGS_DIR,
     OPPONENT_QUALITY_SETTINGS, RECENCY_SETTINGS,
-    RECENT_LOSS_SETTINGS, MOMENTUM_SETTINGS
+    RECENT_LOSS_SETTINGS, MOMENTUM_SETTINGS, BREAKOUT_SETTINGS,
+    MATCH_CONTEXT_SETTINGS,
+    get_tour_level, TOURNAMENT_FORM_WEIGHT
 )
+from collections import Counter
 import csv
 import logging
 import json
@@ -38,6 +41,7 @@ class MatchAnalyzer:
         self.weights = DEFAULT_ANALYSIS_WEIGHTS.copy()
         self._rankings_cache = None
         self._lowest_ranking_cache = None
+        self._ranking_id_cache = None
 
     def _get_ranking_from_cache(self, player_name: str) -> Optional[int]:
         """Look up player ranking from the rankings cache file."""
@@ -59,6 +63,24 @@ class MatchAnalyzer:
                     return player.get('rank')
 
         return None
+
+    def _get_ranking_by_id(self, player_id: int) -> Optional[int]:
+        """Look up a player's current ranking by ID from cache."""
+        if self._ranking_id_cache is None:
+            # Build in local var first to avoid thread race — other threads
+            # would see the empty dict before it's populated
+            cache = {}
+            try:
+                with self.db.get_connection() as conn:
+                    cursor = conn.execute(
+                        "SELECT id, current_ranking FROM players WHERE current_ranking IS NOT NULL"
+                    )
+                    for row in cursor.fetchall():
+                        cache[row[0]] = row[1]
+            except Exception:
+                pass
+            self._ranking_id_cache = cache
+        return self._ranking_id_cache.get(player_id)
 
     def _get_lowest_ranking(self) -> int:
         """Get the lowest (highest number) ranking from the database.
@@ -87,7 +109,7 @@ class MatchAnalyzer:
     # =========================================================================
 
     def calculate_form_score(self, player_id: int, num_matches: int = None,
-                             as_of_date: str = None) -> Dict:
+                             as_of_date: str = None, match_level: int = None) -> Dict:
         """
         Calculate form score for a player based on recent matches.
         Returns score 0-100 with breakdown.
@@ -117,14 +139,48 @@ class MatchAnalyzer:
         details = []
 
         decay = FORM_SETTINGS["recency_decay"]
-        opp_weight = FORM_SETTINGS["opponent_ranking_weight"]
 
         # Get canonical ID for proper alias matching
         player_canonical = self.db.get_canonical_id(player_id)
 
+        # Look up player's own ranking for Elo-expected scoring
+        player_rank = self._get_ranking_by_id(player_id) or 500
+        player_elo = self._ranking_to_elo(player_rank)
+
+        # Level relevance lookup for match context
+        level_relevance_map = MATCH_CONTEXT_SETTINGS.get("form_level_relevance", {})
+        hierarchy = MATCH_CONTEXT_SETTINGS.get("level_hierarchy", {})
+
         for idx, match in enumerate(matches):
-            # Exponential decay for older matches
-            weight = decay ** idx
+            # Tournament level weight — higher-level results carry more weight
+            tournament = match.get('tournament') or match.get('tourney_name') or 'Unknown'
+            tour_level_str = get_tour_level(tournament)
+            tour_weight = TOURNAMENT_FORM_WEIGHT.get(tour_level_str, 1.0)
+
+            # Level relevance — when match_level is provided, weight historical results
+            # by how close their level is to the current match level.
+            # ITF results matter more when analyzing an ITF match; WTA results less so.
+            if match_level is not None:
+                hist_level = hierarchy.get(tour_level_str, 2)
+                level_distance = abs(hist_level - match_level)
+                level_relevance = level_relevance_map.get(level_distance, 0.55)
+                tour_weight *= level_relevance
+
+            # Date-based decay — exponential decay with ~83-day half-life
+            match_date_str = match.get('date')
+            if match_date_str:
+                try:
+                    ref_date = datetime.strptime(as_of_date, "%Y-%m-%d") if as_of_date else datetime.now()
+                    match_dt = datetime.strptime(match_date_str[:10], "%Y-%m-%d")
+                    days_ago = (ref_date - match_dt).days
+                    date_decay = math.exp(-days_ago / 120)
+                except (ValueError, TypeError):
+                    date_decay = 1.0
+            else:
+                date_decay = 1.0
+
+            # Combined weight: position decay × tournament importance × date freshness
+            weight = (decay ** idx) * tour_weight * date_decay
 
             # Check if player won (using canonical IDs for alias matching)
             winner_canonical = self.db.get_canonical_id(match['winner_id'])
@@ -132,21 +188,62 @@ class MatchAnalyzer:
             if won:
                 wins += 1
 
-            # Calculate match score based on opponent strength
+            # Resolve opponent rank — fallback to current ranking if match data is missing
             if won:
                 opp_rank = match.get('loser_rank')
-                if opp_rank is None or not isinstance(opp_rank, (int, float)):
-                    opp_rank = 100
-                # Better ranking of opponent = higher score for winning
-                opp_factor = max(0, 1 - (opp_rank / 200))  # 0-1 scale
-                match_score = 70 + (30 * opp_factor * opp_weight)
+                opp_id = match.get('loser_id')
             else:
                 opp_rank = match.get('winner_rank')
-                if opp_rank is None or not isinstance(opp_rank, (int, float)):
-                    opp_rank = 100
-                # Better ranking of opponent = less penalty for losing
-                opp_factor = max(0, 1 - (opp_rank / 200))
-                match_score = 30 + (20 * opp_factor * opp_weight)
+                opp_id = match.get('winner_id')
+
+            if opp_rank is None or not isinstance(opp_rank, (int, float)):
+                looked_up = self._get_ranking_by_id(opp_id) if opp_id else None
+                opp_rank = looked_up if looked_up else 500
+
+            # Elo-expected match scoring: scores based on how expected the result was
+            opp_elo = self._ranking_to_elo(int(opp_rank))
+            expected_win = 1 / (1 + 10 ** ((opp_elo - player_elo) / 400))
+            # Cap to avoid extreme scores from huge Elo gaps (e.g., #1 vs #1300)
+            expected_win = max(0.05, min(0.95, expected_win))
+
+            # Surprise weighting — upset losses are more informative about true level
+            # Losing to someone you should beat reveals your floor
+            # Wins are not amplified — anyone can beat a weaker opponent
+            if won:
+                surprise = 1.0
+            else:
+                surprise = min(3.0, max(1.0, expected_win / (1 - expected_win)))
+            weight *= surprise
+
+            if won:
+                # Upset win → high score, expected win → modest score
+                base_score = 50 + 50 * (1 - expected_win)
+            else:
+                # Expected loss → near-neutral, upset loss → severe
+                base_score = 60 * (1 - expected_win)
+
+            # Set score dominance modifier — rewards dominant wins, penalizes blowout losses
+            # Try pre-computed game counts first, fall back to parsing score string
+            winner_games = match.get('games_won_w', 0) or 0
+            loser_games = match.get('games_won_l', 0) or 0
+            if winner_games == 0 and loser_games == 0:
+                score_str = match.get('score', '')
+                if score_str:
+                    winner_games, loser_games = self._parse_games_from_score(score_str)
+
+            if won:
+                player_games, opp_games = winner_games, loser_games
+            else:
+                player_games, opp_games = loser_games, winner_games
+
+            total_games = player_games + opp_games
+            if total_games > 0:
+                player_ratio = player_games / total_games
+                dominance = 1 + (player_ratio - 0.5) * 0.3  # 0.85 to 1.15
+            else:
+                dominance = 1.0
+
+            match_score = base_score * dominance
 
             weighted_score += match_score * weight
             total_weight += weight
@@ -164,16 +261,51 @@ class MatchAnalyzer:
                 'opponent_rank': opp_rank,
                 'score': match_score,
                 'weight': weight,
-                'tournament': match.get('tournament') or match.get('tourney_name') or 'Unknown',
+                'tournament': tournament,
+                'dominance': round(dominance, 3),
+                'date_decay': round(date_decay, 3),
+                'surprise': round(surprise, 2),
             })
 
+        # Second pass: amplify confirmed strong wins
+        # A single upset win could be luck. But if the player followed up with
+        # another win against a similarly-ranked (or better) opponent within
+        # the next 2 matches, that confirms it's real — amplify both.
+        # List is most-recent-first, so "followed up" = lower index = more recent.
+        for i, d in enumerate(details):
+            if not d['won'] or d['opponent_rank'] >= player_rank:
+                continue  # Only check wins against stronger opponents
+            # Look at the next 2 matches chronologically (indices i-1, i-2)
+            for j in range(max(0, i - 2), i):
+                dj = details[j]
+                if dj['won'] and dj['opponent_rank'] <= d['opponent_rank'] * 1.5:
+                    # Confirmed! Amplify this win (cap at 2.0)
+                    if d['surprise'] < 2.0:
+                        amplify = 2.0 / max(d['surprise'], 1.0)
+                        weighted_score += d['score'] * d['weight'] * (amplify - 1)
+                        total_weight += d['weight'] * (amplify - 1)
+                        d['weight'] = round(d['weight'] * amplify, 4)
+                        d['surprise'] = 2.0
+                    # Also amplify the confirming win
+                    if dj['surprise'] < 2.0:
+                        amplify_j = 2.0 / max(dj['surprise'], 1.0)
+                        weighted_score += dj['score'] * dj['weight'] * (amplify_j - 1)
+                        total_weight += dj['weight'] * (amplify_j - 1)
+                        dj['weight'] = round(dj['weight'] * amplify_j, 4)
+                        dj['surprise'] = 2.0
+                    break
+
         form_score = weighted_score / total_weight if total_weight > 0 else 50
+
+        # Average opponent rank for transparency
+        avg_opp_rank = round(sum(d['opponent_rank'] for d in details) / len(details)) if details else None
 
         return {
             "score": round(form_score, 1),
             "matches": len(matches),
             "wins": wins,
             "losses": len(matches) - wins,
+            "avg_opponent_rank": avg_opp_rank,
             "win_rate": wins / len(matches) if matches else 0,
             "details": details,
             "has_data": len(matches) >= 3  # Need at least 3 matches for reliable data
@@ -293,6 +425,35 @@ class MatchAnalyzer:
         elo = base_elo - 150 * math.log2(max(ranking, 1))
         return max(elo, 1000)  # Floor at 1000
 
+    @staticmethod
+    def _parse_games_from_score(score_str: str) -> tuple:
+        """
+        Parse total games won by winner and loser from a score string.
+        Examples: "6-0 6-2" → (12, 2), "4-6 7-5 6-1" → (17, 12)
+        Handles tiebreak notation like "7-6(4)" or "7-68".
+        Returns (winner_games, loser_games) or (0, 0) if unparseable.
+        """
+        import re
+        winner_total = 0
+        loser_total = 0
+        try:
+            # Split into sets, strip whitespace
+            sets = score_str.strip().split()
+            for s in sets:
+                # Remove tiebreak info in parentheses: "7-6(4)" → "7-6"
+                s = re.sub(r'\(.*?\)', '', s)
+                # Handle "7-68" format (tiebreak without parens) → "7-6"
+                parts = s.split('-')
+                if len(parts) == 2:
+                    w = int(re.sub(r'[^0-9]', '', parts[0]))
+                    l = int(re.sub(r'[^0-9]', '', parts[1]))
+                    # Cap at 7 per set (tiebreak encoding like "68" → 6)
+                    winner_total += min(w, 7)
+                    loser_total += min(l, 7)
+        except (ValueError, IndexError):
+            return (0, 0)
+        return (winner_total, loser_total)
+
     def _elo_win_probability(self, elo1: float, elo2: float) -> float:
         """
         Calculate win probability using Elo formula.
@@ -334,12 +495,14 @@ class MatchAnalyzer:
             return 200
 
     def get_ranking_factors(self, player1_id: int, player2_id: int,
-                            p1_odds: float = None, p2_odds: float = None) -> Dict:
+                            p1_odds: float = None, p2_odds: float = None,
+                            p1_effective_rank: int = None, p2_effective_rank: int = None) -> Dict:
         """
         Analyze ranking comparison between two players.
         Uses Elo-like probability for more accurate skill gap estimation.
 
         For WTA/unranked players, uses Betfair odds to estimate ranking.
+        p1_effective_rank/p2_effective_rank: Override rankings from breakout detection.
         """
         p1 = self.db.get_player(player1_id) or {}
         p2 = self.db.get_player(player2_id) or {}
@@ -388,6 +551,16 @@ class MatchAnalyzer:
         if p2_rank is None or not isinstance(p2_rank, (int, float)):
             p2_rank = default_rank
 
+        # Store display ranks before applying effective rank overrides
+        p1_display_rank = p1_rank
+        p2_display_rank = p2_rank
+
+        # Apply effective ranking overrides from breakout detection
+        if p1_effective_rank is not None:
+            p1_rank = p1_effective_rank
+        if p2_effective_rank is not None:
+            p2_rank = p2_effective_rank
+
         # Get ranking history for trajectory
         p1_history = self.db.get_player_ranking_history(player1_id, limit=12)
         p2_history = self.db.get_player_ranking_history(player2_id, limit=12)
@@ -396,7 +569,7 @@ class MatchAnalyzer:
         p1_trajectory = self._calculate_trajectory(p1_history)
         p2_trajectory = self._calculate_trajectory(p2_history)
 
-        # Convert rankings to Elo ratings
+        # Convert rankings to Elo ratings (uses effective ranks if overridden)
         p1_elo = self._ranking_to_elo(p1_rank)
         p2_elo = self._ranking_to_elo(p2_rank)
 
@@ -407,21 +580,22 @@ class MatchAnalyzer:
         # 0.5 probability = 0 advantage, 0.9 probability = 0.8 advantage
         rank_advantage = (elo_win_prob - 0.5) * 2
 
-        # Flag for large ranking gap (used for dynamic weighting)
-        # Option B: Increased threshold from 50 to 100 for more extreme gaps only
-        rank_gap = abs(p1_rank - p2_rank)
-        is_large_gap = rank_gap > 100 or (min(p1_rank, p2_rank) <= 10 and rank_gap > 50)
+        # Flag for large ranking gap (uses display ranks — actual gap)
+        rank_gap = abs(p1_display_rank - p2_display_rank)
+        is_large_gap = rank_gap > 100 or (min(p1_display_rank, p2_display_rank) <= 10 and rank_gap > 50)
 
         # Convert to score (50 = equal, 0-100 range)
-        p1_rank_score = max(0, 100 - p1_rank) if p1_rank else 50
-        p2_rank_score = max(0, 100 - p2_rank) if p2_rank else 50
+        p1_rank_score = max(0, 100 - p1_display_rank) if p1_display_rank else 50
+        p2_rank_score = max(0, 100 - p2_display_rank) if p2_display_rank else 50
 
         return {
-            "p1_rank": p1_rank,
-            "p2_rank": p2_rank,
+            "p1_rank": p1_display_rank,
+            "p2_rank": p2_display_rank,
+            "p1_effective_rank": p1_rank,
+            "p2_effective_rank": p2_rank,
             "p1_estimated": p1_estimated,
             "p2_estimated": p2_estimated,
-            "rank_diff": p2_rank - p1_rank,
+            "rank_diff": p2_display_rank - p1_display_rank,
             "p1_trajectory": round(p1_trajectory, 2),
             "p2_trajectory": round(p2_trajectory, 2),
             "p1_peak": p1.get('peak_ranking'),
@@ -433,6 +607,64 @@ class MatchAnalyzer:
             "is_large_gap": is_large_gap,
             "p1_score": p1_rank_score,
             "p2_score": p2_rank_score,
+        }
+
+    def get_performance_elo_factors(self, player1_id: int, player2_id: int,
+                                     p1_odds: float = None, p2_odds: float = None,
+                                     p1_effective_rank: int = None, p2_effective_rank: int = None) -> Dict:
+        """
+        Analyze Performance Elo comparison between two players.
+        Performance Elo = actual results-based Elo from the last 12 months.
+        Falls back to ranking-derived Elo if no Performance Elo is available.
+        p1_effective_rank/p2_effective_rank: Override for fallback ranking (breakout).
+        """
+        p1_perf_elo = self.db.get_player_performance_elo(player1_id)
+        p2_perf_elo = self.db.get_player_performance_elo(player2_id)
+        p1_perf_rank = self.db.get_player_performance_rank(player1_id)
+        p2_perf_rank = self.db.get_player_performance_rank(player2_id)
+
+        p1_has_data = p1_perf_elo is not None
+        p2_has_data = p2_perf_elo is not None
+
+        # Fallback to ranking-derived Elo (use effective rank if breakout detected)
+        if not p1_has_data:
+            p1 = self.db.get_player(player1_id) or {}
+            p1_rank = p1_effective_rank or p1.get('current_ranking')
+            if not p1_rank and p1_odds:
+                p1_rank = self._odds_to_estimated_rank(p1_odds)
+            p1_perf_elo = self._ranking_to_elo(p1_rank or self._get_lowest_ranking())
+        elif p1_effective_rank is not None:
+            # Has real perf elo but breakout detected — blend toward effective rank Elo
+            eff_elo = self._ranking_to_elo(p1_effective_rank)
+            p1_perf_elo = max(p1_perf_elo, 0.5 * p1_perf_elo + 0.5 * eff_elo)
+
+        if not p2_has_data:
+            p2 = self.db.get_player(player2_id) or {}
+            p2_rank = p2_effective_rank or p2.get('current_ranking')
+            if not p2_rank and p2_odds:
+                p2_rank = self._odds_to_estimated_rank(p2_odds)
+            p2_perf_elo = self._ranking_to_elo(p2_rank or self._get_lowest_ranking())
+        elif p2_effective_rank is not None:
+            # Has real perf elo but breakout detected — blend toward effective rank Elo
+            eff_elo = self._ranking_to_elo(p2_effective_rank)
+            p2_perf_elo = max(p2_perf_elo, 0.5 * p2_perf_elo + 0.5 * eff_elo)
+
+        # Standard Elo win probability
+        win_prob = self._elo_win_probability(p1_perf_elo, p2_perf_elo)
+
+        # Convert to -1 to +1 advantage (same approach as ranking factor)
+        advantage = (win_prob - 0.5) * 2
+
+        return {
+            "p1_performance_elo": round(p1_perf_elo, 1),
+            "p2_performance_elo": round(p2_perf_elo, 1),
+            "p1_performance_rank": p1_perf_rank,
+            "p2_performance_rank": p2_perf_rank,
+            "elo_diff": round(p1_perf_elo - p2_perf_elo, 1),
+            "advantage": round(advantage, 3),
+            "p1_has_data": p1_has_data,
+            "p2_has_data": p2_has_data,
+            "win_probability": round(win_prob, 3),
         }
 
     def _calculate_trajectory(self, history: List[Dict]) -> float:
@@ -675,8 +907,9 @@ class MatchAnalyzer:
             # Starts gentle, increases gradually
             rust_days = days_rest - rust_start
             # Sigmoid-like curve: penalty grows faster at first, then tapers
-            # At 7 days over: ~3 pts, at 14 days over: ~8 pts, at 21 days over: ~12 pts
-            rust_penalty = 15 * (1 - math.exp(-rust_days / 10))
+            rust_max = FATIGUE_SETTINGS.get("rust_max_penalty", 25)
+            rust_tau = FATIGUE_SETTINGS.get("rust_tau", 8)
+            rust_penalty = rust_max * (1 - math.exp(-rust_days / rust_tau))
             rest_score = max(25, 40 - rust_penalty)  # Floor at 25 (never completely rust out)
 
         # Workload component (0-40 points) - gradual penalties for activity
@@ -1121,12 +1354,328 @@ class MatchAnalyzer:
         }
 
     # =========================================================================
+    # BREAKOUT DETECTION
+    # =========================================================================
+
+    def calculate_breakout_signal(self, player_id: int, as_of_date: str = None) -> Dict:
+        """
+        Detect if a player is in a breakout phase — recent results dramatically
+        outperforming their ranking. Returns an effective ranking adjustment.
+
+        Breakout = multiple quality wins (against much higher-ranked opponents)
+        clustered in a short time window, adjusted for player age.
+        """
+        settings = BREAKOUT_SETTINGS
+
+        # Get player data
+        player = self.db.get_player(player_id)
+        if not player:
+            return self._empty_breakout_result()
+
+        canonical_id = self.db.get_canonical_id(player_id)
+        player_rank = self._get_ranking_by_id(canonical_id)
+        if not player_rank:
+            player_rank = player.get('current_ranking')
+        if not player_rank or player_rank < settings['min_ranking']:
+            return self._empty_breakout_result(
+                details=f"Rank {player_rank} below threshold {settings['min_ranking']}"
+            )
+
+        # Calculate age from dob
+        age = None
+        dob = player.get('dob')
+        if dob:
+            try:
+                ref_date = datetime.strptime(as_of_date, "%Y-%m-%d") if as_of_date else datetime.now()
+                birth_date = datetime.strptime(str(dob)[:10], "%Y-%m-%d")
+                age = (ref_date - birth_date).days // 365
+            except (ValueError, TypeError):
+                pass
+
+        # Get recent matches
+        matches = self.db.get_player_matches(player_id, limit=40)
+        ref_date = datetime.strptime(as_of_date, "%Y-%m-%d") if as_of_date else datetime.now()
+
+        # Filter to matches before as_of_date
+        if as_of_date:
+            matches = [m for m in matches if m.get('date') and m['date'][:10] < as_of_date]
+
+        cluster_window = settings['cluster_window_days']
+        quality_threshold = settings['quality_win_threshold']
+
+        # Find quality wins within the cluster window
+        quality_wins = []
+        for m in matches:
+            date_str = (m.get('date') or '')[:10]
+            try:
+                match_date = datetime.strptime(date_str, "%Y-%m-%d")
+                days_ago = (ref_date - match_date).days
+            except (ValueError, TypeError):
+                continue
+
+            if days_ago > cluster_window or days_ago < 0:
+                continue
+
+            # Check if player won
+            winner_canonical = self.db.get_canonical_id(m.get('winner_id'))
+            if winner_canonical != canonical_id:
+                continue
+
+            # Get opponent rank
+            opp_rank = m.get('loser_rank')
+            if opp_rank is None or not isinstance(opp_rank, (int, float)):
+                opp_id = m.get('loser_id')
+                looked_up = self._get_ranking_by_id(opp_id) if opp_id else None
+                opp_rank = looked_up if looked_up else None
+
+            if opp_rank is None:
+                continue
+
+            # Quality threshold: opponent must be ranked significantly better
+            rank_threshold = int(player_rank * quality_threshold)
+            if opp_rank <= rank_threshold:
+                quality_wins.append({
+                    'date': date_str,
+                    'opponent_name': m.get('loser_name', 'Unknown'),
+                    'opponent_rank': int(opp_rank),
+                    'days_ago': days_ago,
+                    'rank_ratio': round(opp_rank / player_rank, 3),
+                    'tournament': m.get('tournament', ''),
+                })
+
+        # Need minimum quality wins to trigger
+        if len(quality_wins) < settings['min_quality_wins']:
+            return self._empty_breakout_result(
+                details=f"Only {len(quality_wins)} quality wins (need {settings['min_quality_wins']})"
+            )
+
+        # Calculate implied ranking from quality wins
+        avg_opp_rank = sum(w['opponent_rank'] for w in quality_wins) / len(quality_wins)
+        implied_ranking = int(avg_opp_rank * settings['implied_rank_buffer'])
+        implied_ranking = max(implied_ranking, 50)  # Floor at 50
+
+        # Calculate age multiplier
+        if age is not None:
+            if age <= settings['peak_breakout_age']:
+                age_mult = settings['young_age_multiplier']
+            elif age <= settings['max_breakout_age']:
+                age_mult = settings['neutral_age_multiplier']
+            else:
+                age_mult = settings['old_age_multiplier']
+        else:
+            age_mult = settings['neutral_age_multiplier']
+
+        # Calculate blend factor
+        num_wins = len(quality_wins)
+        blend = settings['base_blend'] + (num_wins - settings['min_quality_wins']) * settings['per_extra_win_blend']
+        blend = min(blend, settings['max_blend'])
+        blend *= age_mult
+        blend = min(blend, 0.85)  # Hard cap
+
+        # Calculate effective ranking
+        effective_ranking = int(player_rank * (1 - blend) + implied_ranking * blend)
+        effective_ranking = max(effective_ranking, implied_ranking)  # Never worse than implied
+        effective_ranking = min(effective_ranking, player_rank)      # Never worse than actual
+
+        win_strs = [f"{w['opponent_name']} (#{w['opponent_rank']}, {w['days_ago']}d ago)" for w in quality_wins]
+        details = (
+            f"BREAKOUT: {num_wins} quality wins in {cluster_window}d. "
+            f"Rank #{player_rank} -> Effective #{effective_ranking} "
+            f"(implied #{implied_ranking}, blend {blend:.0%}, age {age or '?'}, age_mult {age_mult:.1f}). "
+            f"Wins: {', '.join(win_strs)}"
+        )
+
+        return {
+            'breakout_detected': True,
+            'effective_ranking': effective_ranking,
+            'actual_ranking': player_rank,
+            'implied_ranking': implied_ranking,
+            'breakout_score': round(blend, 3),
+            'quality_wins': quality_wins,
+            'num_quality_wins': num_wins,
+            'age': age,
+            'age_multiplier': round(age_mult, 2),
+            'blend_factor': round(blend, 3),
+            'details': details,
+        }
+
+    def _empty_breakout_result(self, details: str = "No breakout detected") -> Dict:
+        """Return a neutral breakout result."""
+        return {
+            'breakout_detected': False,
+            'effective_ranking': None,
+            'actual_ranking': None,
+            'implied_ranking': None,
+            'breakout_score': 0,
+            'quality_wins': [],
+            'num_quality_wins': 0,
+            'age': None,
+            'age_multiplier': 1.0,
+            'blend_factor': 0,
+            'details': details,
+        }
+
+    # =========================================================================
+    # MATCH CONTEXT — TOURNAMENT LEVEL AWARENESS
+    # =========================================================================
+
+    def determine_player_home_level(self, player_id: int, as_of_date: str = None) -> int:
+        """
+        Determine a player's 'home' tournament level.
+        Uses ranking as primary signal (most reliable), with match history as fallback.
+        Returns level: 1=ITF, 2=Challenger, 3=ATP/WTA, 4=Grand Slam.
+
+        Ranking-based (primary): Many tournaments use city names without tour designation
+        (e.g., "Auckland", "Beijing"), making match history unreliable for level detection.
+        A player's ranking directly indicates their competitive level.
+        """
+        # Primary: ranking-based determination
+        canonical_id = self.db.get_canonical_id(player_id)
+        rank = self._get_ranking_by_id(canonical_id)
+        if not rank:
+            player = self.db.get_player(player_id)
+            rank = player.get('current_ranking') if player else None
+
+        if rank:
+            if rank <= 200:
+                return 3  # ATP/WTA level
+            elif rank <= 500:
+                # Check match history to distinguish WTA/Challenger crossover
+                history_level = self._home_level_from_history(player_id, as_of_date)
+                # If they have Grand Slam or WTA/ATP appearances, they're level 3
+                if history_level >= 3:
+                    return 3
+                return 2  # Challenger level
+            elif rank <= 1000:
+                return 2  # Challenger level
+            else:
+                return 1  # ITF level
+
+        # Fallback: match history
+        return self._home_level_from_history(player_id, as_of_date)
+
+    def _home_level_from_history(self, player_id: int, as_of_date: str = None) -> int:
+        """Determine home level from match history (fallback method)."""
+        hierarchy = MATCH_CONTEXT_SETTINGS["level_hierarchy"]
+
+        matches = self.db.get_player_matches(player_id, limit=20)
+        if as_of_date:
+            matches = [m for m in matches if m.get('date') and m['date'][:10] < as_of_date]
+
+        if not matches:
+            return 2  # Default to Challenger
+
+        levels = []
+        for m in matches:
+            tournament = m.get('tournament') or m.get('tourney_name') or ''
+            tour_level = get_tour_level(tournament)
+            level_num = hierarchy.get(tour_level, 2)
+            levels.append(level_num)
+
+        # Return the most common non-Unknown level, or max if Unknown dominates
+        counter = Counter(levels)
+        return counter.most_common(1)[0][0]
+
+    def get_match_context(self, p1_id: int, p2_id: int, tournament: str = None,
+                          as_of_date: str = None) -> Dict:
+        """
+        Compute match context: level mismatch detection, displacement discounts,
+        and context warnings.
+        """
+        settings = MATCH_CONTEXT_SETTINGS
+        hierarchy = settings["level_hierarchy"]
+        warnings = []
+
+        # Determine match level from tournament name
+        if tournament:
+            tour_level_str = get_tour_level(tournament)
+            match_level = hierarchy.get(tour_level_str, 2)
+        else:
+            match_level = None  # Can't determine without tournament
+
+        # If we can't determine match level, return neutral context
+        if match_level is None:
+            return {
+                'match_level': None,
+                'match_level_str': 'Unknown',
+                'p1_home_level': None,
+                'p2_home_level': None,
+                'p1_displacement': 0,
+                'p2_displacement': 0,
+                'p1_discount': 0.0,
+                'p2_discount': 0.0,
+                'warnings': [],
+            }
+
+        # Determine each player's home level
+        p1_home = self.determine_player_home_level(p1_id, as_of_date)
+        p2_home = self.determine_player_home_level(p2_id, as_of_date)
+
+        # Calculate displacement (positive = playing below home level)
+        p1_displacement = max(0, p1_home - match_level)
+        p2_displacement = max(0, p2_home - match_level)
+
+        # Calculate discount
+        discount_per = settings["discount_per_level"]
+        max_discount = settings["max_discount"]
+        p1_discount = min(p1_displacement * discount_per, max_discount)
+        p2_discount = min(p2_displacement * discount_per, max_discount)
+
+        # Level name lookup (reverse)
+        level_names = {v: k for k, v in hierarchy.items() if k != "Unknown"}
+        level_names[1] = "ITF"
+        level_names[2] = "Challenger"
+        level_names[3] = "ATP/WTA"
+        level_names[4] = "Grand Slam"
+
+        match_level_str = level_names.get(match_level, "Unknown")
+
+        # Generate warnings
+        if settings.get("level_mismatch_warning"):
+            if p1_displacement > 0:
+                p1_name = self._get_player_name(p1_id)
+                warnings.append(
+                    f"LEVEL MISMATCH: {p1_name} normally plays {level_names.get(p1_home, '?')} "
+                    f"level but this match is {match_level_str} "
+                    f"({p1_displacement} level{'s' if p1_displacement > 1 else ''} below, "
+                    f"{p1_discount:.0%} discount on ranking/elo/h2h)"
+                )
+            if p2_displacement > 0:
+                p2_name = self._get_player_name(p2_id)
+                warnings.append(
+                    f"LEVEL MISMATCH: {p2_name} normally plays {level_names.get(p2_home, '?')} "
+                    f"level but this match is {match_level_str} "
+                    f"({p2_displacement} level{'s' if p2_displacement > 1 else ''} below, "
+                    f"{p2_discount:.0%} discount on ranking/elo/h2h)"
+                )
+
+        return {
+            'match_level': match_level,
+            'match_level_str': match_level_str,
+            'p1_home_level': p1_home,
+            'p2_home_level': p2_home,
+            'p1_displacement': p1_displacement,
+            'p2_displacement': p2_displacement,
+            'p1_discount': p1_discount,
+            'p2_discount': p2_discount,
+            'warnings': warnings,
+        }
+
+    def _get_player_name(self, player_id: int) -> str:
+        """Get player name by ID for warning messages."""
+        player = self.db.get_player(player_id)
+        if player:
+            return player.get('name', f'Player #{player_id}')
+        return f'Player #{player_id}'
+
+    # =========================================================================
     # MAIN PROBABILITY MODEL
     # =========================================================================
 
     def calculate_win_probability(self, player1_id: int, player2_id: int,
                                    surface: str, match_date: str = None,
-                                   p1_odds: float = None, p2_odds: float = None) -> Dict:
+                                   p1_odds: float = None, p2_odds: float = None,
+                                   tournament: str = None) -> Dict:
         """
         Calculate win probability for player1 against player2.
         Returns comprehensive analysis with probability.
@@ -1134,13 +1683,18 @@ class MatchAnalyzer:
         p1_odds/p2_odds: Optional Betfair odds, used to estimate ranking for
                          WTA/unranked players.
         """
-        match_date = match_date or datetime.now().strftime("%Y-%m-%d")
+        match_date = (match_date or datetime.now().strftime("%Y-%m-%d"))[:10]
+
+        # Compute match context (level mismatch detection)
+        match_context = self.get_match_context(player1_id, player2_id, tournament, match_date)
+        context_match_level = match_context.get('match_level')
+        context_warnings = list(match_context.get('warnings', []))
 
         # Get all factor scores in parallel for better performance
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
-                'p1_form': executor.submit(self.calculate_form_score, player1_id, None, match_date),
-                'p2_form': executor.submit(self.calculate_form_score, player2_id, None, match_date),
+                'p1_form': executor.submit(self.calculate_form_score, player1_id, None, match_date, context_match_level),
+                'p2_form': executor.submit(self.calculate_form_score, player2_id, None, match_date, context_match_level),
                 'p1_surface': executor.submit(self.get_surface_stats, player1_id, surface),
                 'p2_surface': executor.submit(self.get_surface_stats, player2_id, surface),
                 'rankings': executor.submit(self.get_ranking_factors, player1_id, player2_id, p1_odds, p2_odds),
@@ -1157,6 +1711,9 @@ class MatchAnalyzer:
                 'p2_loss_penalty': executor.submit(self.calculate_recent_loss_penalty, player2_id),
                 'p1_momentum': executor.submit(self.calculate_momentum, player1_id, surface),
                 'p2_momentum': executor.submit(self.calculate_momentum, player2_id, surface),
+                'perf_elo': executor.submit(self.get_performance_elo_factors, player1_id, player2_id, p1_odds, p2_odds),
+                'p1_breakout': executor.submit(self.calculate_breakout_signal, player1_id, match_date),
+                'p2_breakout': executor.submit(self.calculate_breakout_signal, player2_id, match_date),
             }
 
             # Collect results
@@ -1180,6 +1737,24 @@ class MatchAnalyzer:
         p2_loss_penalty = results['p2_loss_penalty']
         p1_momentum = results['p1_momentum']
         p2_momentum = results['p2_momentum']
+        perf_elo = results['perf_elo']
+        p1_breakout = results['p1_breakout']
+        p2_breakout = results['p2_breakout']
+
+        # If breakout detected, recompute ranking and perf_elo with effective rankings
+        either_breakout = p1_breakout.get('breakout_detected') or p2_breakout.get('breakout_detected')
+        p1_eff_rank = p1_breakout.get('effective_ranking') if p1_breakout.get('breakout_detected') else None
+        p2_eff_rank = p2_breakout.get('effective_ranking') if p2_breakout.get('breakout_detected') else None
+
+        if either_breakout:
+            rankings = self.get_ranking_factors(
+                player1_id, player2_id, p1_odds, p2_odds,
+                p1_effective_rank=p1_eff_rank, p2_effective_rank=p2_eff_rank
+            )
+            perf_elo = self.get_performance_elo_factors(
+                player1_id, player2_id, p1_odds, p2_odds,
+                p1_effective_rank=p1_eff_rank, p2_effective_rank=p2_eff_rank
+            )
 
         # Check data availability
         p1_has_form_data = p1_form.get('has_data', False)
@@ -1193,10 +1768,53 @@ class MatchAnalyzer:
         # Calculate advantage scores for each factor (-1 to 1, positive = P1 advantage)
         factors = {}
 
-        # Form advantage - only use if both players have data
+        # Loss quality signal — computed once, applied to form and surface
+        # "Who do you lose to?" reveals true level across all factors
+        # Consistency dampening: when losses are scattered (high std dev),
+        # the average is unreliable, so we reduce the stability adjustment.
+        loss_quality_diff = 0
+        max_stability = FORM_SETTINGS.get("max_stability_adjustment", 0.20)
         if p1_has_form_data and p2_has_form_data:
-            form_diff = p1_form['score'] - p2_form['score']
-            factors['form'] = form_diff / 100
+            p1_losses = [d for d in p1_form['details'] if not d['won']]
+            p2_losses = [d for d in p2_form['details'] if not d['won']]
+            if p1_losses and p2_losses:
+                # Convert each loss opponent rank to Elo individually
+                p1_loss_elos = [self._ranking_to_elo(int(d['opponent_rank'])) for d in p1_losses]
+                p2_loss_elos = [self._ranking_to_elo(int(d['opponent_rank'])) for d in p2_losses]
+
+                p1_mean_loss_elo = sum(p1_loss_elos) / len(p1_loss_elos)
+                p2_mean_loss_elo = sum(p2_loss_elos) / len(p2_loss_elos)
+
+                # Positive = P2 loses to stronger opponents (P2 more stable)
+                loss_quality_diff = (p2_mean_loss_elo - p1_mean_loss_elo) / 400
+
+                # Consistency dampening: reduce adjustment when losses are scattered
+                # A player losing to #66 AND #470 has unreliable average loss quality
+                min_losses = FORM_SETTINGS.get("loss_consistency_min_losses", 2)
+                if len(p1_loss_elos) >= min_losses and len(p2_loss_elos) >= min_losses:
+                    import statistics
+                    p1_std = statistics.stdev(p1_loss_elos)
+                    p2_std = statistics.stdev(p2_loss_elos)
+                    max_std = max(p1_std, p2_std)
+                    baseline = FORM_SETTINGS.get("loss_consistency_baseline", 150)
+                    steepness = FORM_SETTINGS.get("loss_consistency_steepness", 2.0)
+                    consistency = 1.0 / (1.0 + (max_std / baseline) ** steepness)
+                    loss_quality_diff *= consistency
+
+        # Form advantage - only use if both players have data
+        # Apply diminishing returns (tanh) so extreme form gaps can't dominate
+        if p1_has_form_data and p2_has_form_data:
+            raw_form_diff = (p1_form['score'] - p2_form['score']) / 100
+            max_adv = FORM_SETTINGS.get("max_form_advantage", 0.10)
+            factors['form'] = max_adv * math.tanh(raw_form_diff / max_adv)
+
+            # Loss quality stability adjustment on form
+            if loss_quality_diff != 0:
+                stability_adj = -max_stability * math.tanh(loss_quality_diff / 0.40)
+                factors['form'] += stability_adj
+            # Cap total form advantage (raw tanh + stability) to prevent runaway values
+            max_total = max_adv + max_stability
+            factors['form'] = max(-max_total, min(max_total, factors['form']))
         else:
             factors['form'] = 0  # Neutral if no data
 
@@ -1204,6 +1822,13 @@ class MatchAnalyzer:
         if p1_has_surface_data and p2_has_surface_data:
             surface_diff = p1_surface['combined_win_rate'] - p2_surface['combined_win_rate']
             factors['surface'] = surface_diff
+
+            # Loss quality adjustment on surface — win rates are quality-blind
+            # A 61.5% hard court rate vs Grand Slam opponents is better than
+            # 63.6% against ITF opponents. Same stability signal applies.
+            if loss_quality_diff != 0:
+                surface_stability = -max_stability * 0.5 * math.tanh(loss_quality_diff / 0.40)
+                factors['surface'] += surface_stability
         else:
             factors['surface'] = 0  # Neutral if no data
 
@@ -1240,6 +1865,55 @@ class MatchAnalyzer:
         momentum_diff = p1_momentum['bonus'] - p2_momentum['bonus']
         factors['momentum'] = momentum_diff
 
+        # Performance Elo advantage
+        factors['performance_elo'] = perf_elo['advantage']
+
+        # Apply match context: asymmetric score discount for displaced players
+        # When a player competes below their home level, their ranking/elo/h2h
+        # advantages are less meaningful (e.g., WTA player at ITF event)
+        p1_discount = match_context.get('p1_discount', 0)
+        p2_discount = match_context.get('p2_discount', 0)
+        discounted_factors = MATCH_CONTEXT_SETTINGS.get("discounted_factors", [])
+
+        if p1_discount > 0 or p2_discount > 0:
+            for factor_name in discounted_factors:
+                if factor_name not in factors:
+                    continue
+                score = factors[factor_name]
+                # Positive score = P1 advantage, negative = P2 advantage
+                # Only discount the advantage of the displaced player
+                if score > 0 and p1_discount > 0:
+                    # P1 has advantage AND P1 is displaced — discount it
+                    factors[factor_name] = score * (1 - p1_discount)
+                elif score < 0 and p2_discount > 0:
+                    # P2 has advantage AND P2 is displaced — discount it
+                    factors[factor_name] = score * (1 - p2_discount)
+
+        # Add rust warnings from fatigue data
+        rust_warn_days = MATCH_CONTEXT_SETTINGS.get("rust_warning_days", 10)
+        p1_days_rest = p1_fatigue.get('days_since_match')
+        p2_days_rest = p2_fatigue.get('days_since_match')
+        if p1_days_rest and p1_days_rest > rust_warn_days:
+            p1_name = self._get_player_name(player1_id)
+            context_warnings.append(
+                f"RUST: {p1_name} has not played in {p1_days_rest} days"
+            )
+        if p2_days_rest and p2_days_rest > rust_warn_days:
+            p2_name = self._get_player_name(player2_id)
+            context_warnings.append(
+                f"RUST: {p2_name} has not played in {p2_days_rest} days"
+            )
+
+        # Add near-breakout warnings
+        if MATCH_CONTEXT_SETTINGS.get("near_breakout_warning"):
+            for label, bo in [("P1", p1_breakout), ("P2", p2_breakout)]:
+                if not bo.get('breakout_detected') and bo.get('num_quality_wins', 0) == 1:
+                    pid = player1_id if label == "P1" else player2_id
+                    pname = self._get_player_name(pid)
+                    context_warnings.append(
+                        f"NEAR-BREAKOUT: {pname} has 1 quality win (needs 2 to trigger breakout)"
+                    )
+
         # Adjust weights based on data availability and ranking gap
         adjusted_weights = self.weights.copy()
 
@@ -1254,12 +1928,25 @@ class MatchAnalyzer:
                 adjusted_weights['surface'] = 0
             adjusted_weights['ranking'] += missing_weight
 
+        # If neither player has Performance Elo data, redistribute to ranking
+        if not perf_elo.get('p1_has_data') and not perf_elo.get('p2_has_data'):
+            adjusted_weights['ranking'] += adjusted_weights.get('performance_elo', 0)
+            adjusted_weights['performance_elo'] = 0
+
         # Dynamic weighting for large ranking gaps
         # When there's a huge skill gap, ranking should dominate
+        # BUT: suppress when breakout detected (ranking is stale) OR when either
+        # player is displaced 2+ levels below their home level (e.g., WTA player at ITF).
+        # 1-level displacement (ATP player at Challenger) is normal and shouldn't suppress.
         is_large_gap = rankings.get('is_large_gap', False)
         elo_win_prob = rankings.get('elo_win_prob', 0.5)
+        max_displacement = max(
+            match_context.get('p1_displacement', 0),
+            match_context.get('p2_displacement', 0)
+        )
+        significant_displacement = (max_displacement >= 2)
 
-        if is_large_gap:
+        if is_large_gap and not either_breakout and not significant_displacement:
             # For large gaps, boost ranking weight significantly
             # Reduce other factors' influence as the skill gap makes them less relevant
             gap_boost = 0.25  # Additional weight for ranking
@@ -1275,6 +1962,7 @@ class MatchAnalyzer:
             adjusted_weights['recency'] = max(adjusted_weights.get('recency', 0) - gap_reduction, 0.02)
             adjusted_weights['recent_loss'] = max(adjusted_weights.get('recent_loss', 0) - gap_reduction, 0.01)
             adjusted_weights['momentum'] = max(adjusted_weights.get('momentum', 0) - gap_reduction, 0.01)
+            adjusted_weights['performance_elo'] = max(adjusted_weights.get('performance_elo', 0) - gap_reduction, 0.02)
 
         # Calculate weighted advantage
         weighted_advantage = sum(
@@ -1288,30 +1976,25 @@ class MatchAnalyzer:
 
         # For large ranking gaps, blend with Elo probability for more accuracy
         # This anchors extreme matchups closer to market expectations
-        # Option C: Check if form contradicts ranking before blending
-        # Option D: Reduced blend from 60% to 30% Elo
-        if is_large_gap:
+        # BUT: suppress when breakout detected OR significant displacement (2+ levels)
+        if is_large_gap and not either_breakout and not significant_displacement:
             # Check if form-based factors contradict the ranking
-            # Sum of form-related advantages (negative = lower-ranked player is better)
             form_based_advantage = (
                 factors['form'] +
                 factors['surface'] +
                 factors.get('opponent_quality', 0) +
                 factors.get('recency', 0) +
                 factors.get('recent_loss', 0) +
-                factors.get('momentum', 0)
+                factors.get('momentum', 0) +
+                factors.get('performance_elo', 0)
             )
 
-            # Ranking advantage direction (positive = higher-ranked player favored)
             ranking_favors_p1 = factors['ranking'] > 0
             form_favors_p1 = form_based_advantage > 0
 
-            # If form contradicts ranking, trust the form-based model more
             if ranking_favors_p1 != form_favors_p1:
-                # Form contradicts ranking - use 90% model, 10% Elo
                 p1_probability = 0.9 * model_probability + 0.1 * elo_win_prob
             else:
-                # Form supports ranking - use 70% model, 30% Elo (reduced from 60%)
                 p1_probability = 0.7 * model_probability + 0.3 * elo_win_prob
         else:
             p1_probability = model_probability
@@ -1387,7 +2070,18 @@ class MatchAnalyzer:
                     "advantage": round(factors['momentum'], 3),
                     "weight": self.weights['momentum'],
                 },
+                "performance_elo": {
+                    "data": perf_elo,
+                    "advantage": round(factors['performance_elo'], 3),
+                    "weight": self.weights.get('performance_elo', 0.12),
+                },
             },
+            "breakout": {
+                "p1": p1_breakout,
+                "p2": p2_breakout,
+            },
+            "match_context": match_context,
+            "context_warnings": context_warnings,
         }
 
     def _calculate_confidence(self, p1_form, p2_form, p1_surface, p2_surface, h2h,

@@ -18,6 +18,10 @@ if getattr(sys, 'frozen', False):
     INSTALL_DIR = Path(sys.executable).parent
     # Public Documents for data (writable by all users)
     BASE_DIR = Path("C:/Users/Public/Documents/Tennis Betting System")
+elif os.environ.get('TENNIS_DATA_DIR'):
+    # Cloud/CI environment: use environment variable for data paths
+    INSTALL_DIR = Path(__file__).parent.parent
+    BASE_DIR = Path(os.environ['TENNIS_DATA_DIR'])
 else:
     # Running as script - use same data location as installed app
     INSTALL_DIR = Path(__file__).parent.parent
@@ -300,6 +304,11 @@ def calculate_bet_model(our_probability: float, implied_probability: float, tour
     """
     models = []
 
+    # Odds floor - odds below 1.70 are not considered value
+    min_odds_floor = 1.70
+    if odds and odds < min_odds_floor:
+        return "None"
+
     # Calculate edge
     edge = our_probability - implied_probability if implied_probability else 0
 
@@ -320,6 +329,336 @@ def calculate_bet_model(our_probability: float, implied_probability: float, tour
         models.append("Model 8")
 
     return ", ".join(models) if models else "None"
+
+
+def _get_te_recent_matches(db_name: str, db_connection, days: int = 60) -> tuple:
+    """
+    Scrape Tennis Explorer to get actual recent match count for a player.
+    Returns (match_count, played_this_month, te_url) or (None, None, None) if unable to fetch.
+    """
+    import urllib.request
+    import re
+    from datetime import datetime, timedelta
+
+    try:
+        cursor = db_connection.cursor()
+        cursor.execute('SELECT tennis_explorer_url FROM players WHERE name = ?', (db_name,))
+        row = cursor.fetchone()
+
+        if not row or not row[0]:
+            return None, None, None
+
+        te_url = row[0]
+
+        # Fetch the page
+        req = urllib.request.Request(te_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+
+        # Count matches in 2026 (current year)
+        # Tennis Explorer format: dates like "27.01." or "27.01.26"
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        cutoff_date = datetime.now() - timedelta(days=days)
+
+        # Look for match rows - they contain dates in format DD.MM.
+        match_count = 0
+        played_this_month = False
+
+        # Pattern for dates like "14.01." or "27.01."
+        date_pattern = re.compile(r'(\d{1,2})\.(\d{1,2})\.')
+
+        # Find all dates in the page
+        for match in date_pattern.finditer(html):
+            day, month = int(match.group(1)), int(match.group(2))
+            try:
+                # Assume current year for dates in first part of year
+                match_date = datetime(current_year, month, day)
+                if match_date >= cutoff_date:
+                    match_count += 1
+                    if month == current_month:
+                        played_this_month = True
+            except ValueError:
+                continue
+
+        # Divide by 3 because each match appears multiple times (date shown in multiple places)
+        # This is approximate - Tennis Explorer shows date in multiple places per match
+        match_count = max(1, match_count // 3) if match_count > 0 else 0
+
+        return match_count, played_this_month, te_url
+
+    except Exception as e:
+        return None, None, None
+
+
+def _get_mapped_player_name(betfair_name: str, db_connection) -> str:
+    """
+    Convert a Betfair player name to the database name using name_mappings.json.
+    Returns the database name if a mapping exists, otherwise returns the original name.
+    """
+    if not betfair_name:
+        return betfair_name
+
+    try:
+        import json
+        # Load name mappings
+        mappings_path = INSTALL_DIR / "data" / "name_mappings.json"
+        if not mappings_path.exists():
+            # Try alternate location for dev
+            mappings_path = Path(__file__).parent.parent / "data" / "name_mappings.json"
+
+        if mappings_path.exists():
+            with open(mappings_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                mappings = data.get('mappings', {})
+
+                if betfair_name in mappings:
+                    mapped_value = mappings[betfair_name]
+
+                    # If mapped to an integer ID, look up the player name
+                    if isinstance(mapped_value, int):
+                        cursor = db_connection.cursor()
+                        cursor.execute('SELECT name FROM players WHERE id = ?', (mapped_value,))
+                        row = cursor.fetchone()
+                        if row:
+                            return row[0]
+                    else:
+                        # Mapped to a name string
+                        return mapped_value
+    except Exception:
+        pass
+
+    return betfair_name
+
+
+def check_data_quality_for_stake(player1_name: str, player2_name: str, stake: float,
+                                  db_connection=None, selection_name: str = None) -> dict:
+    """
+    Check data quality for bets - BLOCKS bets if players have insufficient data.
+
+    For HIGH STAKES (2u+), applies STRONGER justification requirements:
+    - Both players need 5+ matches (not just 3+)
+    - Selection's 2026 form must not be 20%+ worse than opponent
+    - This ensures we're not betting purely on ranking against form
+
+    Returns dict with:
+        - 'passed': bool - True if data quality is acceptable
+        - 'warnings': list - Any warnings about data quality
+        - 'recommended_stake': float - Original stake (not modified)
+    """
+    result = {
+        'passed': True,
+        'warnings': [],
+        'recommended_stake': stake
+    }
+
+    if db_connection is None:
+        return result
+
+    try:
+        from datetime import datetime, timedelta
+
+        cursor = db_connection.cursor()
+        cutoff_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+        year_start = datetime.now().strftime('%Y') + '-01-01'
+
+        # Determine minimum matches required based on stake
+        is_high_stake = stake >= 2.0
+        min_matches = 5 if is_high_stake else 3
+
+        # Map Betfair names to database names
+        db_player1 = _get_mapped_player_name(player1_name, db_connection)
+        db_player2 = _get_mapped_player_name(player2_name, db_connection)
+        db_selection = _get_mapped_player_name(selection_name, db_connection) if selection_name else None
+
+        # Create mapping from original to database names for warnings
+        name_map = {
+            player1_name: db_player1,
+            player2_name: db_player2
+        }
+        if selection_name:
+            name_map[selection_name] = db_selection
+
+        # Store player stats for form comparison
+        player_stats = {}
+
+        for orig_name, db_name in [(player1_name, db_player1), (player2_name, db_player2)]:
+            if not db_name:
+                continue
+
+            # Use EXACT name match - not LIKE which can match wrong players
+            cursor.execute('''
+                SELECT COUNT(*) FROM matches
+                WHERE (winner_name = ? OR loser_name = ?)
+                AND date >= ?
+            ''', (db_name, db_name, cutoff_date))
+            recent_matches = cursor.fetchone()[0]
+
+            if recent_matches < min_matches:
+                # Database shows insufficient matches - verify on Tennis Explorer
+                te_matches, played_this_month, te_url = _get_te_recent_matches(db_name, db_connection, days=60)
+
+                if te_matches is not None and te_matches >= min_matches:
+                    # Tennis Explorer shows enough matches - database is stale, PASS
+                    result['warnings'].append(
+                        f"{orig_name}: DB shows {recent_matches} matches but TE shows ~{te_matches} (PASSED via TE: {te_url})"
+                    )
+                    # Don't set passed = False - TE verification passed
+                elif te_matches is not None and played_this_month:
+                    # TE shows insufficient matches BUT player has played this month
+                    # PASS with stake reduction instead of blocking
+                    result['warnings'].append(
+                        f"{orig_name}: Only {te_matches} matches on TE (need {min_matches}+) but PLAYED THIS MONTH - reduce stake 50% - {te_url}"
+                    )
+                    # Apply 50% stake reduction
+                    result['recommended_stake'] = round(result['recommended_stake'] * 0.5, 2)
+                    result['stake_reduced'] = True
+                    # Don't set passed = False - allow bet with reduced stake
+                elif te_matches is not None:
+                    # TE shows insufficient AND hasn't played this month - BLOCK
+                    result['warnings'].append(
+                        f"{orig_name}: Only {te_matches} matches on TE, hasn't played this month (need {min_matches}+ for {stake}u bet) - {te_url}"
+                    )
+                    result['passed'] = False
+                else:
+                    # Couldn't fetch TE - fall back to database result
+                    result['warnings'].append(
+                        f"{orig_name}: Only {recent_matches} matches in DB (need {min_matches}+), TE verification failed"
+                    )
+                    result['passed'] = False
+
+            # For high stakes, also get 2026 win/loss record for form comparison
+            if is_high_stake:
+                cursor.execute('''
+                    SELECT
+                        SUM(CASE WHEN winner_name = ? THEN 1 ELSE 0 END) as wins,
+                        SUM(CASE WHEN loser_name = ? THEN 1 ELSE 0 END) as losses
+                    FROM matches
+                    WHERE (winner_name = ? OR loser_name = ?)
+                    AND date >= ?
+                ''', (db_name, db_name, db_name, db_name, year_start))
+                row = cursor.fetchone()
+                wins = row[0] or 0
+                losses = row[1] or 0
+                total = wins + losses
+                win_rate = (wins / total * 100) if total > 0 else 0
+                player_stats[orig_name] = {'wins': wins, 'losses': losses, 'win_rate': win_rate, 'total': total}
+
+        # For high stakes: Check form comparison
+        if is_high_stake and selection_name and len(player_stats) == 2:
+            # Determine which player is selection and which is opponent
+            opponent_name = player1_name if selection_name == player2_name else player2_name
+
+            if selection_name in player_stats and opponent_name in player_stats:
+                sel_stats = player_stats[selection_name]
+                opp_stats = player_stats[opponent_name]
+
+                # Both need minimum matches for form comparison to be meaningful
+                if sel_stats['total'] >= 3 and opp_stats['total'] >= 3:
+                    form_diff = sel_stats['win_rate'] - opp_stats['win_rate']
+
+                    # Block if selection's form is 15%+ worse than opponent
+                    if form_diff <= -15:
+                        result['warnings'].append(
+                            f"FORM CHECK FAILED: {selection_name} ({sel_stats['wins']}W-{sel_stats['losses']}L = {sel_stats['win_rate']:.0f}%) "
+                            f"vs {opponent_name} ({opp_stats['wins']}W-{opp_stats['losses']}L = {opp_stats['win_rate']:.0f}%) - "
+                            f"Selection's form is {abs(form_diff):.0f}% worse"
+                        )
+                        result['passed'] = False
+
+    except Exception as e:
+        result['warnings'].append(f"Data quality check error: {e}")
+
+    return result
+
+
+def adjust_stake_for_confidence(base_stake: float, factor_analysis: dict) -> dict:
+    """
+    Adjust stake based on data confidence from factor analysis.
+
+    High-stake bets (2u+) require multiple factors to support the bet.
+    If key factors have missing data, stake is reduced.
+
+    Returns dict with:
+        - 'adjusted_stake': float - The recommended stake after adjustment
+        - 'original_stake': float - The original calculated stake
+        - 'confidence_multiplier': float - The multiplier applied (0.5 to 1.0)
+        - 'adjustments': list - Reasons for any reductions
+    """
+    result = {
+        'adjusted_stake': base_stake,
+        'original_stake': base_stake,
+        'confidence_multiplier': 1.0,
+        'adjustments': []
+    }
+
+    # Only apply adjustments to 2u+ stakes
+    if base_stake < 2.0:
+        return result
+
+    if not factor_analysis or 'factors' not in factor_analysis:
+        return result
+
+    factors = factor_analysis.get('factors', {})
+    multiplier = 1.0
+
+    # Check surface data
+    surface = factors.get('surface', {})
+    p1_surface_data = surface.get('p1', {}).get('has_data', False)
+    p2_surface_data = surface.get('p2', {}).get('has_data', False)
+
+    if not p1_surface_data and not p2_surface_data:
+        multiplier -= 0.20
+        result['adjustments'].append('No surface data for either player (-20%)')
+    elif not p1_surface_data or not p2_surface_data:
+        multiplier -= 0.10
+        result['adjustments'].append('Surface data missing for one player (-10%)')
+
+    # Check H2H data
+    h2h = factors.get('h2h', {})
+    h2h_matches = h2h.get('data', {}).get('total_matches', 0)
+
+    if h2h_matches == 0:
+        multiplier -= 0.10
+        result['adjustments'].append('No H2H history (-10%)')
+
+    # Check form data quality (matches analyzed)
+    form = factors.get('form', {})
+    p1_form_matches = form.get('p1', {}).get('matches', 0)
+    p2_form_matches = form.get('p2', {}).get('matches', 0)
+
+    if p1_form_matches < 5 or p2_form_matches < 5:
+        multiplier -= 0.15
+        result['adjustments'].append(f'Limited form data (P1: {p1_form_matches}, P2: {p2_form_matches} matches) (-15%)')
+
+    # Check if ranking is the dominant factor (>40% of weighted advantage)
+    ranking = factors.get('ranking', {})
+    ranking_advantage = abs(ranking.get('advantage', 0))
+    ranking_weight = ranking.get('weight', 0.2)
+
+    weighted_advantage = abs(factor_analysis.get('weighted_advantage', 0))
+    if weighted_advantage > 0:
+        ranking_contribution = (ranking_advantage * ranking_weight) / weighted_advantage
+        if ranking_contribution > 0.40:
+            multiplier -= 0.10
+            result['adjustments'].append(f'Ranking dominates ({ranking_contribution*100:.0f}% of edge) (-10%)')
+
+    # Floor at 0.5 (never reduce by more than half)
+    multiplier = max(0.5, multiplier)
+
+    # Calculate adjusted stake
+    adjusted = base_stake * multiplier
+
+    # Round to nearest 0.5
+    adjusted = round(adjusted * 2) / 2
+
+    # Minimum stake of 0.5
+    adjusted = max(0.5, adjusted)
+
+    result['adjusted_stake'] = adjusted
+    result['confidence_multiplier'] = multiplier
+
+    return result
 
 
 # ============================================================================
@@ -352,62 +691,64 @@ ROUND_NAMES = {
 }
 
 # ============================================================================
-# ANALYSIS WEIGHTS (Configurable) - Experimental v2.0
-# Removed redundant factors: opponent_quality (absorbed by form), recency (in form decay)
+# ANALYSIS WEIGHTS (Configurable) - v2.2 (9 active factors)
+# Added performance_elo: actual results-based Elo from last 12 months
+# Weight taken from ranking (-0.07) and form (-0.05) since perf_elo overlaps both
 # ============================================================================
 DEFAULT_ANALYSIS_WEIGHTS = {
-    "form": 0.25,           # Increased - absorbs opponent quality signal
-    "surface": 0.20,        # Increased - likely edge source vs market
-    "ranking": 0.20,        # Solid anchor
-    "h2h": 0.05,            # Reduced - often noise, market prices it well
-    "fatigue": 0.15,        # Increased - market underweights this
-    "injury": 0.05,         # Keep
+    "form": 0.20,              # Reduced from 0.25 - perf_elo captures some form signal
+    "surface": 0.20,           # Unchanged - likely edge source vs market
+    "ranking": 0.13,           # Reduced from 0.20 - perf_elo is better ranking signal
+    "h2h": 0.05,               # Unchanged
+    "fatigue": 0.15,           # Unchanged - market underweights this
+    "injury": 0.05,            # Unchanged
     "opponent_quality": 0.00,  # REMOVED - redundant with form
     "recency": 0.00,           # REMOVED - already in form's decay
-    "recent_loss": 0.08,    # Increased - psychological edge
-    "momentum": 0.02,       # Keep small
+    "recent_loss": 0.08,       # Unchanged - psychological edge
+    "momentum": 0.02,          # Unchanged
+    "performance_elo": 0.12,   # NEW - actual results vs ranking expectation
 }
 
 # ============================================================================
-# MODEL WEIGHT PROFILES (Simplified v2.0)
-# Based on experimental analysis - 8 active factors only
+# MODEL WEIGHT PROFILES (v2.2 - 9 active factors)
+# All profiles include performance_elo factor
 # ============================================================================
 MODEL_WEIGHT_PROFILES = {
     "Default": {
-        # The new default weights - removes redundant factors
-        "form": 0.25, "surface": 0.20, "ranking": 0.20, "h2h": 0.05,
+        "form": 0.20, "surface": 0.20, "ranking": 0.13, "h2h": 0.05,
         "fatigue": 0.15, "injury": 0.05, "opponent_quality": 0.00,
-        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02
+        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02,
+        "performance_elo": 0.12
     },
     "Form Focus": {
-        # 40% form-focused
-        "form": 0.40, "surface": 0.15, "ranking": 0.15, "h2h": 0.05,
+        "form": 0.35, "surface": 0.15, "ranking": 0.10, "h2h": 0.05,
         "fatigue": 0.10, "injury": 0.05, "opponent_quality": 0.00,
-        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02
+        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02,
+        "performance_elo": 0.10
     },
     "Surface Focus": {
-        # 35% surface-focused
-        "form": 0.20, "surface": 0.35, "ranking": 0.15, "h2h": 0.05,
+        "form": 0.15, "surface": 0.35, "ranking": 0.10, "h2h": 0.05,
         "fatigue": 0.10, "injury": 0.05, "opponent_quality": 0.00,
-        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02
+        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02,
+        "performance_elo": 0.10
     },
     "Ranking Focus": {
-        # 35% ranking-focused
-        "form": 0.20, "surface": 0.15, "ranking": 0.35, "h2h": 0.05,
+        "form": 0.15, "surface": 0.15, "ranking": 0.25, "h2h": 0.05,
         "fatigue": 0.10, "injury": 0.05, "opponent_quality": 0.00,
-        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02
+        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02,
+        "performance_elo": 0.15
     },
     "Fatigue Focus": {
-        # 30% fatigue-focused - market blind spot
-        "form": 0.20, "surface": 0.15, "ranking": 0.15, "h2h": 0.05,
+        "form": 0.15, "surface": 0.15, "ranking": 0.10, "h2h": 0.05,
         "fatigue": 0.30, "injury": 0.05, "opponent_quality": 0.00,
-        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02
+        "recency": 0.00, "recent_loss": 0.08, "momentum": 0.02,
+        "performance_elo": 0.10
     },
     "Psychology Focus": {
-        # Emphasizes recent_loss and momentum
-        "form": 0.25, "surface": 0.15, "ranking": 0.15, "h2h": 0.05,
+        "form": 0.20, "surface": 0.15, "ranking": 0.10, "h2h": 0.05,
         "fatigue": 0.10, "injury": 0.05, "opponent_quality": 0.00,
-        "recency": 0.00, "recent_loss": 0.15, "momentum": 0.10
+        "recency": 0.00, "recent_loss": 0.15, "momentum": 0.10,
+        "performance_elo": 0.10
     },
 }
 
@@ -415,11 +756,47 @@ MODEL_WEIGHT_PROFILES = {
 # FORM CALCULATION SETTINGS
 # ============================================================================
 FORM_SETTINGS = {
-    "default_matches": 10,       # Default number of matches for form calculation
+    "default_matches": 20,       # Default number of matches for form calculation
     "min_matches": 5,            # Minimum matches for form calculation
     "max_matches": 20,           # Maximum matches for form calculation
     "recency_decay": 0.9,        # Decay factor for older matches (exponential)
-    "opponent_ranking_weight": 0.3,  # How much opponent strength affects form score
+    "max_form_advantage": 0.10,  # Diminishing returns cap (tanh) on form advantage
+    "max_stability_adjustment": 0.20,  # Cap for loss quality adjustment (tanh)
+    # Loss quality consistency dampening — reduces stability adjustment when
+    # a player's losses are scattered (some to top 100, some to #400+)
+    "loss_consistency_baseline": 150,     # StdDev (Elo) at which consistency ~= 0.50
+    "loss_consistency_steepness": 2.0,    # Exponent controlling decay rate
+    "loss_consistency_min_losses": 2,     # Min losses per player to compute std dev
+}
+
+# Tournament level weight for form calculation.
+# Higher-level tournament results carry more weight in the form score average.
+TOURNAMENT_FORM_WEIGHT = {
+    "Grand Slam": 1.3,
+    "ATP": 1.15,
+    "WTA": 1.1,
+    "Challenger": 1.0,
+    "ITF": 0.85,
+    "Unknown": 1.0,
+}
+
+# ============================================================================
+# PERFORMANCE ELO SETTINGS
+# Rolling 12-month Elo calculated from actual match results.
+# K-factor determines how much a single result shifts the rating.
+# Higher K for bigger tournaments = those results matter more.
+# ============================================================================
+PERFORMANCE_ELO_SETTINGS = {
+    "rolling_months": 12,
+    "default_elo": 1200,
+    "k_factors": {
+        "Grand Slam": 48,
+        "ATP": 32,
+        "WTA": 28,
+        "Challenger": 24,
+        "ITF": 20,
+        "Unknown": 24,
+    },
 }
 
 # ============================================================================
@@ -452,6 +829,57 @@ MOMENTUM_SETTINGS = {
 }
 
 # ============================================================================
+# BREAKOUT DETECTION SETTINGS
+# ============================================================================
+# Detects when a player's recent results dramatically outperform their ranking,
+# signaling a genuine level shift ("breakout") rather than random variance.
+BREAKOUT_SETTINGS = {
+    "min_ranking": 150,            # Top-150 don't qualify (ranking already accurate)
+    "peak_breakout_age": 22,       # Full age bonus at/below this age
+    "max_breakout_age": 28,        # No age bonus above this
+    "quality_win_threshold": 0.5,  # Opponent rank must be <= player_rank * threshold
+    "cluster_window_days": 45,     # Quality wins must be within this window
+    "min_quality_wins": 2,         # Minimum to trigger breakout
+    "base_blend": 0.50,            # Blend toward implied ranking (2 wins)
+    "per_extra_win_blend": 0.10,   # Extra blend per additional quality win
+    "max_blend": 0.75,             # Hard cap on blend
+    "young_age_multiplier": 1.3,   # Under peak age
+    "neutral_age_multiplier": 1.0, # peak to max age
+    "old_age_multiplier": 0.6,     # Over max age
+    "implied_rank_buffer": 1.2,    # Multiply avg opponent rank (don't over-promote)
+    "suppress_large_gap_boost": True,
+}
+
+# ============================================================================
+# MATCH CONTEXT SETTINGS
+# When a player competes below their home tournament level, their ranking/
+# perf_elo/h2h advantages are less meaningful. This system detects level
+# displacement and discounts factor scores accordingly.
+# ============================================================================
+MATCH_CONTEXT_SETTINGS = {
+    "level_hierarchy": {
+        "ITF": 1,
+        "Challenger": 2,
+        "WTA": 3,
+        "ATP": 3,
+        "Grand Slam": 4,
+        "Unknown": 2,  # Default to middle ground
+    },
+    "discount_per_level": 0.20,       # Score discount per level of displacement
+    "max_discount": 0.60,             # Hard cap on discount
+    "discounted_factors": ["ranking", "performance_elo", "h2h"],
+    "form_level_relevance": {
+        0: 1.00,   # Same level as current match
+        1: 0.85,   # 1 level away
+        2: 0.70,   # 2 levels away
+        3: 0.55,   # 3 levels away
+    },
+    "rust_warning_days": 10,
+    "level_mismatch_warning": True,
+    "near_breakout_warning": True,
+}
+
+# ============================================================================
 # SURFACE STATS SETTINGS
 # ============================================================================
 SURFACE_SETTINGS = {
@@ -478,13 +906,16 @@ FATIGUE_SETTINGS = {
     "difficulty_max_minutes": 300,       # Marathon duration cap (5 hours)
     "difficulty_baseline_sets": 2,       # Baseline sets for best-of-3
     "difficulty_overload_threshold": 6.0,  # Difficulty points in 7 days = concerning
+    # Enhanced rust parameters (configurable instead of hardcoded)
+    "rust_max_penalty": 25,    # Max rust penalty points (was hardcoded at 15)
+    "rust_tau": 8,             # Exponential decay constant (was hardcoded at 10)
 }
 
 # ============================================================================
 # BETTING SETTINGS
 # ============================================================================
 BETTING_SETTINGS = {
-    "min_ev_threshold": 0.02,    # Minimum expected value (2%) - lowered to maximize volume
+    "min_ev_threshold": 0.05,    # Minimum expected value (5%)
     "high_ev_threshold": 0.10,   # High value threshold (10%)
     "max_odds": 10.0,            # Maximum odds to consider
     "min_probability": 0.10,     # Minimum win probability to consider
@@ -502,15 +933,18 @@ KELLY_STAKING = {
 
     # Kelly fraction - what portion of full Kelly to use
     # Full Kelly is mathematically optimal but too aggressive in practice
-    # Quarter (0.25) = conservative, Half (0.50) = aggressive, 0.40 = balanced
-    "kelly_fraction": 0.50,
+    # Quarter (0.25) = conservative, Half (0.50) = aggressive, 0.375 = balanced
+    "kelly_fraction": 0.375,
 
     # Betfair exchange commission rate (applied to winnings)
     # Basic package: 2%, Rewards: 5%, Rewards+: 8%
     "exchange_commission": 0.02,
 
-    # Minimum odds to consider - lowered to allow more bets
-    "min_odds": 1.30,
+    # Minimum odds floor - odds below this are not considered value
+    "min_odds": 1.70,
+
+    # Minimum opponent odds - skip match if either player is below this (liquidity filter)
+    "min_opponent_odds": 1.05,
 
     # Minimum units to place a bet - lowered to allow more bets
     "min_units": 0.25,
@@ -524,15 +958,15 @@ KELLY_STAKING = {
     # prob_ratio = our_probability / implied_probability
     "disagreement_penalty": {
         "minor": {               # Minor disagreement - trust model
-            "max_ratio": 1.50,   # Up to 1.5x market probability
+            "max_ratio": 1.20,   # Up to 1.2x market probability
             "penalty": 1.0,      # Full stake
         },
         "moderate": {            # Moderate disagreement - reduce stake
-            "max_ratio": 2.0,    # 1.5x - 2.0x market probability
+            "max_ratio": 1.50,   # 1.2x - 1.5x market probability
             "penalty": 0.75,     # 75% of calculated stake
         },
         "major": {               # Major disagreement - still bet but smaller
-            "max_ratio": 999,    # 2.0x+ market probability
+            "max_ratio": 999,    # 1.5x+ market probability
             "penalty": 0.50,     # 50% stake - still betting to build sample
         },
     },
@@ -556,18 +990,19 @@ KELLY_STAKING = {
     },
 
     # Market blend - weight market probability into model
-    # Analysis showed model is overconfident, market is smarter
+    # DISABLED: You can't beat the market by agreeing with it.
+    # If model has 10% edge, blending gives 7% edge. Mathematically self-defeating.
     "market_blend": {
-        "enabled": True,
-        "market_weight": 0.30,   # 30% market, 70% model
+        "enabled": False,  # Disabled - let model disagree with market
+        "market_weight": 0.30,   # 30% market, 70% model (unused when disabled)
     },
 
     # Probability calibration - shrinkage method
-    # Based on 60 settled bets: model predicts 53.5% avg but wins only 31.7%
-    # Model is ~1.7x overconfident - we shrink probabilities toward 50%
-    # This maintains bet volume while giving more realistic probability estimates
+    # DISABLED: Based on only 60 bets - statistically meaningless sample.
+    # Re-enable when you have 500+ bets with tracked predictions vs outcomes.
+    # Then calibrate based on actual Brier scores, not guesses.
     "calibration": {
-        "enabled": True,
+        "enabled": False,  # Disabled - need 500+ bets before calibrating
         "type": "shrinkage",     # "shrinkage", "polynomial", or "linear"
         # Shrinkage factor: how much to pull toward 50%
         # 0.5 = aggressive shrinkage (60% -> 55%, 70% -> 60%)

@@ -65,7 +65,7 @@ class CloudSync:
         """Check if Supabase is configured."""
         return bool(self.url and self.key and 'supabase.co' in self.url)
 
-    def _request(self, endpoint: str, method: str = 'GET', data: Dict = None) -> Optional[Dict]:
+    def _request(self, endpoint: str, method: str = 'GET', data: Dict = None, upsert: bool = False) -> Optional[Dict]:
         """Make request to Supabase REST API."""
         if not self.is_configured():
             return None
@@ -74,7 +74,11 @@ class CloudSync:
 
         try:
             body = json.dumps(data).encode('utf-8') if data else None
-            req = urllib.request.Request(url, data=body, headers=self.headers, method=method)
+            headers = self.headers.copy()
+            if upsert:
+                # For upserts, need resolution=merge-duplicates to update existing rows
+                headers['Prefer'] = 'return=representation,resolution=merge-duplicates'
+            req = urllib.request.Request(url, data=body, headers=headers, method=method)
 
             with urllib.request.urlopen(req, timeout=10) as response:
                 response_data = response.read().decode('utf-8')
@@ -114,7 +118,8 @@ class CloudSync:
         result = self._request(
             'pending_bets?on_conflict=id',
             method='POST',
-            data=cloud_bet
+            data=cloud_bet,
+            upsert=True
         )
 
         return result is not None

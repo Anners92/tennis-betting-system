@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Any
 from contextlib import contextmanager
 
-from config import DB_PATH, DATA_DIR, KELLY_STAKING
+from config import DB_PATH, DATA_DIR, KELLY_STAKING, normalize_tournament_name
 
 # Import validation after config to avoid circular imports
 _validator = None
@@ -81,34 +81,19 @@ class TennisDatabase:
                         pass
 
                 try:
-                    # Copy seed database if it doesn't exist OR if seed is newer
+                    # Only copy seed database on first install (no existing DB)
                     seed_db = seed_data_dir / "tennis_betting.db"
-                    should_copy = False
 
-                    if not self.db_path.exists():
-                        should_copy = True
-                    elif seed_db.exists():
-                        # Check if seed database is newer (has more bets or newer timestamp)
-                        seed_mtime = seed_db.stat().st_mtime
-                        db_mtime = self.db_path.stat().st_mtime
-                        if seed_mtime > db_mtime:
-                            # Seed is newer - back up old and copy new
-                            backup_path = self.db_path.with_suffix('.db.backup')
-                            shutil.copy2(self.db_path, backup_path)
-                            should_copy = True
-                            print(f"Backing up old database to {backup_path}")
-
-                    if should_copy and seed_db.exists():
+                    if seed_db.exists() and not self.db_path.exists():
                         shutil.copy2(seed_db, self.db_path)
                         print(f"Copied seed database to {self.db_path}")
 
-                    # Copy name_mappings.json if it doesn't exist
+                    # Always overwrite name_mappings.json with latest version (reference data, not user data)
                     mappings_dest = DATA_DIR / "name_mappings.json"
-                    if not mappings_dest.exists():
-                        seed_mappings = seed_data_dir / "name_mappings.json"
-                        if seed_mappings.exists():
-                            shutil.copy2(seed_mappings, mappings_dest)
-                            print(f"Copied name mappings to {mappings_dest}")
+                    seed_mappings = seed_data_dir / "name_mappings.json"
+                    if seed_mappings.exists():
+                        shutil.copy2(seed_mappings, mappings_dest)
+                        print(f"Updated name mappings at {mappings_dest}")
                 finally:
                     # Release lock
                     try:
@@ -165,6 +150,9 @@ class TennisDatabase:
                 "ALTER TABLE players ADD COLUMN last_ta_update TEXT",
                 "ALTER TABLE players ADD COLUMN peak_ranking_date TEXT",
                 "ALTER TABLE bets ADD COLUMN market TEXT",
+                "ALTER TABLE players ADD COLUMN performance_elo REAL",
+                "ALTER TABLE players ADD COLUMN performance_rank INTEGER",
+                "ALTER TABLE players ADD COLUMN tour TEXT",
             ]
             for migration in migrations:
                 try:
@@ -346,7 +334,7 @@ class TennisDatabase:
                 "ALTER TABLE bets ADD COLUMN settled_at TEXT",
                 "ALTER TABLE bets ADD COLUMN in_progress INTEGER DEFAULT 0",
                 "ALTER TABLE bets ADD COLUMN model TEXT",
-                "ALTER TABLE bets ADD COLUMN factor_scores TEXT",  # JSON of individual factor scores for backtesting
+                "ALTER TABLE bets ADD COLUMN factor_scores TEXT",  # JSON of individual factor scores
                 "ALTER TABLE bets ADD COLUMN odds_at_close REAL",  # Closing odds for CLV tracking
                 "ALTER TABLE bets ADD COLUMN clv REAL",  # Closing Line Value percentage
                 "ALTER TABLE bets ADD COLUMN weighting TEXT",  # Weight profile used for this bet
@@ -513,6 +501,70 @@ class TennisDatabase:
             cursor.execute("SELECT * FROM players WHERE id = ?", (player_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def update_player_performance_elo(self, player_id: int, performance_elo: float):
+        """Update a player's Performance Elo rating."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE players SET performance_elo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (performance_elo, player_id)
+            )
+
+    def get_player_performance_elo(self, player_id: int) -> Optional[float]:
+        """Get a player's Performance Elo. Returns None if not calculated."""
+        canonical_id = self.get_canonical_id(player_id)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT performance_elo FROM players WHERE id = ?",
+                (canonical_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+        return None
+
+    def get_player_performance_rank(self, player_id: int) -> Optional[int]:
+        """Get a player's Performance Rank (rank by Performance Elo). Returns None if not ranked."""
+        canonical_id = self.get_canonical_id(player_id)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT performance_rank FROM players WHERE id = ?",
+                (canonical_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return int(row[0])
+        return None
+
+    def update_player_tour(self, player_id: int, tour: str):
+        """Update a player's tour classification (ATP or WTA)."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE players SET tour = ? WHERE id = ?",
+                (tour, player_id)
+            )
+
+    def update_all_performance_ranks(self):
+        """Rank all players by Performance Elo within their tour (highest = rank 1)."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Clear all ranks first
+            cursor.execute("UPDATE players SET performance_rank = NULL")
+            # Assign ranks within each tour separately
+            for tour in ('ATP', 'WTA'):
+                cursor.execute("""
+                    UPDATE players SET performance_rank = (
+                        SELECT COUNT(*) + 1
+                        FROM players AS p2
+                        WHERE p2.performance_elo > players.performance_elo
+                        AND p2.tour = ?
+                    )
+                    WHERE performance_elo IS NOT NULL AND tour = ?
+                """, (tour, tour))
 
     def add_player(self, name: str, ranking: int = None, country: str = None,
                    hand: str = None) -> int:
@@ -1430,6 +1482,39 @@ class TennisDatabase:
                 """, (player_id,))
             return [dict(row) for row in cursor.fetchall()]
 
+    def recalculate_all_surface_stats(self) -> int:
+        """Recalculate surface stats for all players from match data.
+        Returns the number of stats updated."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Clear existing stats
+            cursor.execute("DELETE FROM player_surface_stats")
+
+            # Recalculate from matches
+            cursor.execute("""
+                INSERT INTO player_surface_stats (player_id, surface, matches_played, wins, losses, win_rate)
+                SELECT
+                    player_id,
+                    surface,
+                    COUNT(*) as matches_played,
+                    SUM(won) as wins,
+                    SUM(1 - won) as losses,
+                    ROUND(CAST(SUM(won) AS FLOAT) / COUNT(*), 3) as win_rate
+                FROM (
+                    SELECT winner_id as player_id, surface, 1 as won
+                    FROM matches WHERE surface IS NOT NULL
+                    UNION ALL
+                    SELECT loser_id as player_id, surface, 0 as won
+                    FROM matches WHERE surface IS NOT NULL
+                )
+                WHERE player_id IS NOT NULL
+                GROUP BY player_id, surface
+            """)
+
+            cursor.execute("SELECT COUNT(*) FROM player_surface_stats")
+            return cursor.fetchone()[0]
+
     # =========================================================================
     # INJURIES
     # =========================================================================
@@ -1481,6 +1566,11 @@ class TennisDatabase:
 
     def add_bet(self, bet_data: Dict) -> int:
         """Add a bet record."""
+        # Normalize tournament name to strip year suffixes (e.g., "2026")
+        tournament = bet_data.get('tournament', '')
+        if tournament:
+            tournament = normalize_tournament_name(tournament)
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -1491,7 +1581,7 @@ class TennisDatabase:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 bet_data.get('match_date', datetime.now().isoformat()[:10]),
-                bet_data.get('tournament'),
+                tournament,
                 bet_data.get('match_description'),
                 bet_data.get('player1'),
                 bet_data.get('player2'),
@@ -1560,20 +1650,6 @@ class TennisDatabase:
             cursor.execute("SELECT * FROM bets WHERE id = ?", (bet_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
-
-    def get_settled_bets_for_backtest(self) -> List[Dict]:
-        """Get all settled bets with factor scores for backtesting."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, match_date, tournament, match_description, selection,
-                       stake, odds, our_probability, implied_probability,
-                       result, profit_loss, factor_scores
-                FROM bets
-                WHERE result IN ('Win', 'Loss')
-                ORDER BY match_date DESC
-            """)
-            return [dict(row) for row in cursor.fetchall()]
 
     def check_duplicate_bet(self, match_description: str, selection: str, match_date: str = None, tournament: str = None, weighting: str = None) -> Optional[Dict]:
         """Check if a bet with the same tournament, match, selection, and weighting already exists.
@@ -1646,6 +1722,11 @@ class TennisDatabase:
 
     def update_bet(self, bet_id: int, bet_data: Dict):
         """Update an existing bet."""
+        # Normalize tournament name to strip year suffixes (e.g., "2026")
+        tournament = bet_data.get('tournament', '')
+        if tournament:
+            tournament = normalize_tournament_name(tournament)
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -1687,7 +1768,7 @@ class TennisDatabase:
                 WHERE id = ?
             """, (
                 bet_data.get('match_date'),
-                bet_data.get('tournament'),
+                tournament,
                 bet_data.get('match_description'),
                 bet_data.get('player1'),
                 bet_data.get('player2'),
@@ -1966,6 +2047,11 @@ class TennisDatabase:
 
     def add_upcoming_match(self, match_data: Dict) -> int:
         """Add an upcoming match for analysis. Updates if match already exists."""
+        # Normalize tournament name to strip year suffixes (e.g., "2026")
+        tournament = match_data.get('tournament', '')
+        if tournament:
+            tournament = normalize_tournament_name(tournament)
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -1976,7 +2062,7 @@ class TennisDatabase:
             """, (
                 match_data.get('player1_name'),
                 match_data.get('player2_name'),
-                match_data.get('tournament'),
+                tournament,
             ))
             existing = cursor.fetchone()
 
@@ -1992,7 +2078,7 @@ class TennisDatabase:
                 """, (
                     match_data.get('player1_odds'),
                     match_data.get('player2_odds'),
-                    match_data.get('tournament'),
+                    tournament,
                     match_data.get('surface'),
                     match_data.get('player1_liquidity'),
                     match_data.get('player2_liquidity'),
@@ -2009,7 +2095,7 @@ class TennisDatabase:
                      player1_liquidity, player2_liquidity, total_matched)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    match_data.get('tournament'),
+                    tournament,
                     match_data.get('date'),
                     match_data.get('round'),
                     match_data.get('surface'),

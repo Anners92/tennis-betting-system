@@ -149,23 +149,37 @@ class PlayerNameMatcher:
 
         # For names like "A. Grubor", also index as if "Grubor" is the last name
         # and for "Grubor A.", also consider all parts as potential last names
+        # For Asian names like "Cody Wong Hong Yi", index "wong" with ALL initials (c, h, y)
+        # so that "Wong H." can match (Tennis Explorer may abbreviate any part)
         for part in components['all_parts']:
             if len(part) > 1:  # Skip initials
                 if part not in self.by_last_name:
                     self.by_last_name[part] = []
-                # Add with any available initial
-                initial = ''
+
+                # Collect ALL initials from other name parts (for Asian/compound names)
+                all_initials = set()
                 for p in components['all_parts']:
                     if len(p) == 1:
-                        initial = p
-                        break
+                        all_initials.add(p)
                     elif p != part and len(p) > 1:
-                        initial = p[0]
-                        break
-                # Check if this combination already exists
+                        all_initials.add(p[0])
+
+                # Check existing entries for this part
                 existing = [(pid, fn) for pid, fn, fi in self.by_last_name[part]]
                 if (player_id, full_name) not in existing:
-                    self.by_last_name[part].append((player_id, full_name, initial))
+                    # Add entry with first available initial for by_last_name
+                    first_initial = list(all_initials)[0] if all_initials else ''
+                    self.by_last_name[part].append((player_id, full_name, first_initial))
+
+                # Index by part + EACH initial in by_last_initial
+                # This allows "Wong H." to match "Cody Wong Hong Yi" (H for Hong)
+                for initial in all_initials:
+                    key = f"{part}_{initial}"
+                    if key not in self.by_last_initial:
+                        self.by_last_initial[key] = []
+                    # Avoid duplicates
+                    if (player_id, full_name) not in self.by_last_initial[key]:
+                        self.by_last_initial[key].append((player_id, full_name))
 
     def find_player_id(self, name: str) -> Optional[int]:
         """

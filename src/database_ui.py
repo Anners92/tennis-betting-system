@@ -280,6 +280,19 @@ class DatabaseUI:
                                          relief=tk.FLAT, cursor="hand2",
                                          command=self._edit_player, padx=8, pady=2)
         self.player_edit_btn.pack(side=tk.LEFT, padx=(10, 0))
+        self.current_te_url = None  # Store current player's TE URL
+
+        # Row 1b: Tennis Explorer URL (clickable link)
+        row1b = tk.Frame(basic_inner, bg=UI_COLORS["bg_medium"])
+        row1b.pack(fill=tk.X, pady=2)
+
+        tk.Label(row1b, text="TE URL:", bg=UI_COLORS["bg_medium"],
+                fg=UI_COLORS["text_secondary"], font=("Segoe UI", 9)).pack(side=tk.LEFT)
+        self.te_url_label = tk.Label(row1b, text="-", bg=UI_COLORS["bg_medium"],
+                                     fg="#3498db", font=("Segoe UI", 9, "underline"),
+                                     cursor="hand2")
+        self.te_url_label.pack(side=tk.LEFT, padx=(2, 0))
+        self.te_url_label.bind("<Button-1>", lambda e: self._open_tennis_explorer())
 
         # Row 2: Ranking, ELO, Total Matches
         row2 = tk.Frame(basic_inner, bg=UI_COLORS["bg_medium"])
@@ -1020,6 +1033,13 @@ class DatabaseUI:
         self.detail_labels["ID"].configure(text=str(player_id))
         self.detail_labels["Name"].configure(text=player.get('name', '-'))
 
+        # Store and display Tennis Explorer URL
+        self.current_te_url = player.get('tennis_explorer_url')
+        if self.current_te_url:
+            self.te_url_label.configure(text=self.current_te_url)
+        else:
+            self.te_url_label.configure(text="Not available")
+
         ranking = player.get('current_ranking') or player.get('ranking')
         self.detail_labels["Ranking"].configure(text=f"#{ranking}" if ranking else "Unranked")
         self.detail_labels["Matches"].configure(text=str(match_count))
@@ -1414,6 +1434,15 @@ class DatabaseUI:
                 dialog.destroy()
 
         tree.bind('<Double-1>', on_double_click)
+
+    def _open_tennis_explorer(self):
+        """Open the current player's Tennis Explorer page in browser."""
+        if not hasattr(self, 'current_te_url') or not self.current_te_url:
+            messagebox.showwarning("No URL", "No Tennis Explorer URL available for this player.")
+            return
+
+        import webbrowser
+        webbrowser.open(self.current_te_url)
 
     def _edit_player(self):
         """Edit the current player's properties."""

@@ -31,7 +31,7 @@ except ImportError:
 
 # Import Cloud Sync for Supabase
 try:
-    from cloud_sync import get_cloud_sync, sync_bet_to_cloud
+    from cloud_sync import get_cloud_sync, sync_bet_to_cloud, remove_bet_from_cloud
     CLOUD_SYNC_AVAILABLE = True
 except ImportError:
     CLOUD_SYNC_AVAILABLE = False
@@ -74,20 +74,21 @@ class BetTracker:
                 ev = (our_prob * (odds - 1)) - (1 - our_prob)
                 bet_data['ev_at_placement'] = ev
 
-        # Calculate which model(s) this bet qualifies for
-        our_prob = bet_data.get('our_probability', 0.5)
-        implied_prob = bet_data.get('implied_probability', 0.5)
-        tournament = bet_data.get('tournament', '')
-        odds = bet_data.get('odds')
-        # Parse factor_scores if it's a JSON string
-        factor_scores = bet_data.get('factor_scores')
-        if isinstance(factor_scores, str):
-            import json
-            try:
-                factor_scores = json.loads(factor_scores)
-            except:
-                factor_scores = None
-        bet_data['model'] = calculate_bet_model(our_prob, implied_prob, tournament, odds, factor_scores)
+        # Calculate which model(s) this bet qualifies for (skip if manually set)
+        if not bet_data.get('model'):
+            our_prob = bet_data.get('our_probability') or 0.5
+            implied_prob = bet_data.get('implied_probability') or 0.5
+            tournament = bet_data.get('tournament', '')
+            odds = bet_data.get('odds')
+            # Parse factor_scores if it's a JSON string
+            factor_scores = bet_data.get('factor_scores')
+            if isinstance(factor_scores, str):
+                import json
+                try:
+                    factor_scores = json.loads(factor_scores)
+                except:
+                    factor_scores = None
+            bet_data['model'] = calculate_bet_model(our_prob, implied_prob, tournament, odds, factor_scores)
 
         return self.db.add_bet(bet_data)
 
@@ -577,6 +578,82 @@ class BetTracker:
 
         return results
 
+    def get_weekly_stats(self, week_offset: int = 0) -> Dict:
+        """Get stats for a week (Mon-Sun) based on settled_at date.
+
+        Args:
+            week_offset: 0 for current week, -1 for last week, etc.
+
+        Returns dict with keys: 'monday', 'tuesday', etc. and 'total'
+        Each day has: staked, returned, profit, roi
+        """
+        from datetime import datetime, timedelta
+
+        # Find Monday of target week
+        today = datetime.now().date()
+        days_since_monday = today.weekday()  # Monday=0, Sunday=6
+        monday = today - timedelta(days=days_since_monday) + timedelta(weeks=week_offset)
+
+        # Initialize all days
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        stats = {day: {'staked': 0.0, 'returned': 0.0, 'profit': 0.0, 'roi': 0.0} for day in days}
+        stats['total'] = {'staked': 0.0, 'returned': 0.0, 'profit': 0.0, 'roi': 0.0}
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get all settled bets this week (by settled_at date)
+            week_end = monday + timedelta(days=6)
+            cursor.execute("""
+                SELECT
+                    DATE(settled_at) as settle_date,
+                    stake,
+                    odds,
+                    result,
+                    profit_loss
+                FROM bets
+                WHERE result IN ('Win', 'Loss')
+                AND DATE(settled_at) >= ?
+                AND DATE(settled_at) <= ?
+            """, (monday.isoformat(), week_end.isoformat()))
+
+            for row in cursor.fetchall():
+                settle_date_str, stake, odds, result, profit_loss = row
+                if not settle_date_str:
+                    continue
+
+                # Parse the date and get day of week
+                try:
+                    settle_date = datetime.strptime(settle_date_str, '%Y-%m-%d').date()
+                    day_idx = settle_date.weekday()  # 0=Monday
+                    day_name = days[day_idx]
+                except:
+                    continue
+
+                stake = stake or 0
+                profit_loss = profit_loss or 0
+
+                # Calculate returned (stake + profit for wins, 0 for losses)
+                if result == 'Win':
+                    returned = stake + profit_loss
+                else:
+                    returned = 0
+
+                stats[day_name]['staked'] += stake
+                stats[day_name]['returned'] += returned
+                stats[day_name]['profit'] += profit_loss
+
+                stats['total']['staked'] += stake
+                stats['total']['returned'] += returned
+                stats['total']['profit'] += profit_loss
+
+            # Calculate ROI for each day and total
+            for key in stats:
+                if stats[key]['staked'] > 0:
+                    stats[key]['roi'] = (stats[key]['profit'] / stats[key]['staked']) * 100
+
+        return stats
+
     def get_flagged_bets(self) -> List[Dict]:
         """Get bets that should be flagged for review."""
         flagged = []
@@ -824,6 +901,9 @@ class BetTrackerUI:
                     if prefill_bet:
                         cls._instance.prefill_bet = prefill_bet
                         cls._instance.root.after(100, cls._instance._add_bet_dialog)
+                    # Update callback if provided (fixes case where tracker was first opened without one)
+                    if on_change_callback:
+                        cls._instance.on_change_callback = on_change_callback
                     return cls._instance
             except tk.TclError:
                 # Window was destroyed, allow new instance
@@ -1745,6 +1825,70 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        # ========== ROW 0: WEEKLY P/L GRIDS ==========
+        # Container for both weekly grids
+        weekly_container = ttk.Frame(scrollable_frame, style="Card.TFrame", padding=15)
+        weekly_container.pack(fill=tk.X, pady=10, padx=10)
+
+        # Initialize label dictionaries
+        self.weekly_labels = {}
+        self.last_week_labels = {}
+
+        # Helper function to create a weekly grid
+        def create_weekly_grid(parent, title: str, label_dict: dict, header_bg: str):
+            frame = ttk.Frame(parent, style="Card.TFrame")
+            frame.pack(fill=tk.X, pady=(0, 15))
+
+            # Title with background color matching mockup
+            title_lbl = tk.Label(frame, text=title, font=("Segoe UI", 10, "bold"),
+                                fg=UI_COLORS["text_primary"], bg=header_bg, padx=10, pady=5)
+            title_lbl.pack(anchor=tk.W)
+
+            # Create grid frame for the table
+            grid_frame = ttk.Frame(frame, style="Card.TFrame")
+            grid_frame.pack(fill=tk.X, pady=(5, 0))
+
+            # Configure columns to be equal width
+            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', 'Total']
+            for i in range(len(days) + 1):  # +1 for row labels
+                grid_frame.columnconfigure(i, weight=1, uniform="weekly")
+
+            # Header row (day names)
+            ttk.Label(grid_frame, text="", style="Card.TLabel",
+                      font=("Segoe UI", 9)).grid(row=0, column=0, padx=2, pady=2, sticky="w")
+            for i, day in enumerate(days):
+                bg_color = "#1e3a5f" if day == "Total" else UI_COLORS["bg_medium"]
+                lbl = tk.Label(grid_frame, text=day[:3] if day != "Total" else "Total",
+                              font=("Segoe UI", 9, "bold"), fg=UI_COLORS["text_primary"],
+                              bg=bg_color, padx=8, pady=4)
+                lbl.grid(row=0, column=i+1, padx=1, pady=1, sticky="nsew")
+
+            # Data rows
+            row_labels = ['Units Staked', 'Units Returned', 'Units Profit', 'ROI%']
+
+            for row_idx, row_label in enumerate(row_labels):
+                # Row label
+                ttk.Label(grid_frame, text=row_label, style="Card.TLabel",
+                          font=("Segoe UI", 9)).grid(row=row_idx+1, column=0, padx=5, pady=2, sticky="w")
+
+                # Day values
+                for col_idx, day in enumerate(days):
+                    day_key = day.lower()
+                    cell_key = f"{day_key}_{row_label.lower().replace(' ', '_').replace('%', '')}"
+
+                    bg_color = "#1e3a5f" if day == "Total" else UI_COLORS["bg_dark"]
+                    lbl = tk.Label(grid_frame, text="0.00" if row_label != "ROI%" else "0.00%",
+                                  font=("Segoe UI", 9), fg=UI_COLORS["text_secondary"],
+                                  bg=bg_color, padx=8, pady=3)
+                    lbl.grid(row=row_idx+1, column=col_idx+1, padx=1, pady=1, sticky="nsew")
+                    label_dict[cell_key] = lbl
+
+        # Create "This Week" grid (tan/beige header like mockup)
+        create_weekly_grid(weekly_container, "This Week", self.weekly_labels, "#c9a227")
+
+        # Create "Last Week" grid (slightly different tan header)
+        create_weekly_grid(weekly_container, "Last Week", self.last_week_labels, "#a68b1f")
+
         # ========== ROW 1: CHARTS (Two columns) ==========
         charts_row = ttk.Frame(scrollable_frame, style="Dark.TFrame")
         charts_row.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
@@ -2077,8 +2221,8 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                     factor_scores = None
 
             model = calculate_bet_model(
-                bet.get('our_probability', 0.5),
-                bet.get('implied_probability', 0.5),
+                bet.get('our_probability') or 0.5,
+                bet.get('implied_probability') or 0.5,
                 bet.get('tournament', ''),
                 bet.get('odds'),
                 factor_scores
@@ -2246,6 +2390,12 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
         tour_stats = self.tracker.get_stats_by_tour()
         flagged = self.tracker.get_flagged_bets()
         markets = self.tracker.get_stats_by_market()
+        weekly_stats = self.tracker.get_weekly_stats(week_offset=0)
+        last_week_stats = self.tracker.get_weekly_stats(week_offset=-1)
+
+        # === UPDATE WEEKLY P/L GRIDS ===
+        self._refresh_weekly_grid(weekly_stats, self.weekly_labels)
+        self._refresh_weekly_grid(last_week_stats, self.last_week_labels)
 
         # === DRAW P/L LINE CHART ===
         self._draw_pl_chart(cumulative)
@@ -2365,6 +2515,64 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                 f"{s['win_rate']:.1f}%", f"{s['staked']:.1f}",
                 f"{s['profit']:+.2f}", f"{s['roi']:+.1f}%",
             ), tags=(tag,))
+
+    def _refresh_weekly_grid(self, weekly_stats: Dict, labels: Dict):
+        """Update a weekly P/L grid with current data.
+
+        Args:
+            weekly_stats: Dict with day keys ('monday', etc.) containing stats
+            labels: Dict mapping cell keys to tk.Label widgets
+        """
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'total']
+
+        for day in days:
+            day_data = weekly_stats.get(day, {'staked': 0, 'returned': 0, 'profit': 0, 'roi': 0})
+
+            # Units Staked
+            staked_key = f"{day}_units_staked"
+            if staked_key in labels:
+                labels[staked_key].config(
+                    text=f"{day_data['staked']:.2f}",
+                    fg=UI_COLORS["text_secondary"]
+                )
+
+            # Units Returned
+            returned_key = f"{day}_units_returned"
+            if returned_key in labels:
+                labels[returned_key].config(
+                    text=f"{day_data['returned']:.2f}",
+                    fg=UI_COLORS["text_secondary"]
+                )
+
+            # Units Profit (color-coded)
+            profit_key = f"{day}_units_profit"
+            if profit_key in labels:
+                profit = day_data['profit']
+                if profit > 0:
+                    color = "#22c55e"  # Green
+                elif profit < 0:
+                    color = "#ef4444"  # Red
+                else:
+                    color = UI_COLORS["text_secondary"]
+                labels[profit_key].config(
+                    text=f"{profit:+.2f}" if profit != 0 else "0.00",
+                    fg=color
+                )
+
+            # ROI% (color-coded)
+            roi_key = f"{day}_roi"
+            if roi_key in labels:
+                roi = day_data['roi']
+                if roi > 0:
+                    color = "#22c55e"  # Green
+                elif roi < 0:
+                    color = "#ef4444"  # Red
+                else:
+                    color = UI_COLORS["text_secondary"]
+                labels[roi_key].config(
+                    text=f"{roi:+.1f}%" if roi != 0 else "0.00%",
+                    fg=color
+                )
 
     def _draw_pl_chart(self, cumulative):
         """Draw cumulative P/L line chart on canvas."""
@@ -2563,7 +2771,7 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
         """Show dialog to add a new bet."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Add New Bet")
-        dialog.geometry("500x500")
+        dialog.geometry("500x540")
         dialog.configure(bg=UI_COLORS["bg_dark"])
         dialog.transient(self.root)
         dialog.grab_set()
@@ -2634,11 +2842,24 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
         prob_entry = ttk.Entry(frame, textvariable=prob_var, width=30)
         prob_entry.grid(row=7, column=1, pady=5, padx=10)
 
+        # Model
+        ttk.Label(frame, text="Model:", style="Dark.TLabel").grid(row=8, column=0, sticky=tk.W, pady=5)
+        model_var = tk.StringVar(value=prefill.get('model', ''))
+        model_combo = ttk.Combobox(frame, textvariable=model_var,
+                                    values=["Model 3", "Model 4", "Model 7", "Model 8",
+                                            "Model 3, Model 4", "Model 3, Model 7", "Model 3, Model 8",
+                                            "Model 4, Model 7", "Model 4, Model 8", "Model 7, Model 8",
+                                            "Model 3, Model 4, Model 7", "Model 3, Model 4, Model 8",
+                                            "Model 3, Model 7, Model 8", "Model 4, Model 7, Model 8",
+                                            "Model 3, Model 4, Model 7, Model 8"],
+                                    width=27)
+        model_combo.grid(row=8, column=1, pady=5, padx=10)
+
         # Notes
-        ttk.Label(frame, text="Notes:", style="Dark.TLabel").grid(row=8, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="Notes:", style="Dark.TLabel").grid(row=9, column=0, sticky=tk.W, pady=5)
         notes_var = tk.StringVar(value=prefill.get('notes', ''))
         notes_entry = ttk.Entry(frame, textvariable=notes_var, width=30)
-        notes_entry.grid(row=8, column=1, pady=5, padx=10)
+        notes_entry.grid(row=9, column=1, pady=5, padx=10)
 
         # Clear prefill data after using it
         self.prefill_bet = None
@@ -2687,6 +2908,7 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                 'stake': stake,
                 'odds': odds,
                 'our_probability': our_prob,
+                'model': model_var.get() if model_var.get() else None,
                 'notes': notes_var.get(),
             }
 
@@ -2854,6 +3076,12 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
             current_tab = self.notebook.index(self.notebook.select())
 
             db.delete_bet(bet_id)
+            # Also remove from Supabase so Discord bot stops tracking it
+            if CLOUD_SYNC_AVAILABLE:
+                try:
+                    remove_bet_from_cloud(bet_id)
+                except Exception:
+                    pass  # Silent fail - cloud sync is optional
             self._refresh_data(skip_date_sync=True)
             self._notify_change()
 
@@ -2890,6 +3118,12 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
             deleted = 0
             for bet in all_bets:
                 db.delete_bet(bet['id'])
+                # Also remove from Supabase
+                if CLOUD_SYNC_AVAILABLE:
+                    try:
+                        remove_bet_from_cloud(bet['id'])
+                    except Exception:
+                        pass
                 deleted += 1
 
             self._refresh_data(skip_date_sync=True)
@@ -3534,6 +3768,7 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                 if new_results and self.last_settled_ids:  # Don't refresh on first load
                     print(f"[Auto-refresh] Detected {len(new_results)} new result(s), refreshing...")
                     self._refresh_data(skip_date_sync=True)
+                    self._notify_change()
                 self.last_settled_ids = current_settled_ids
         except Exception as e:
             print(f"[Auto-refresh] Error checking for results: {e}")
@@ -3591,6 +3826,10 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                 ))
                 # Clear any old scores
                 self.live_scores = {}
+                # Clear in_progress for any previously live bets
+                for bet_id in list(self.previously_live.keys()):
+                    db.set_bet_in_progress(bet_id, False)
+                self.previously_live.clear()
                 self.root.after(0, self._refresh_pending_table)
                 return
 
@@ -3615,6 +3854,8 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                     if bet_id not in self.previously_live:
                         self.previously_live[bet_id] = {'bet': bet, 'market': market_info}
                         newly_live.append(bet)
+                        # Mark as in_progress in local DB (source of truth for Discord bot)
+                        db.set_bet_in_progress(bet_id, True)
                     else:
                         # Update market info
                         self.previously_live[bet_id] = {'bet': bet, 'market': market_info}
@@ -3628,6 +3869,8 @@ A 10% edge means we think the player is 10 percentage points more likely to win 
                     # This bet was live but isn't anymore - match may have finished
                     prev_data = self.previously_live.pop(bet_id)
                     just_finished.append(prev_data)
+                    # Clear in_progress in local DB
+                    db.set_bet_in_progress(bet_id, False)
 
             # Send Discord alerts for newly live bets
             # Live alerts now handled by local_monitor.py

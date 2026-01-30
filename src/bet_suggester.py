@@ -9,7 +9,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import json
 
-from config import UI_COLORS, SURFACES, BETTING_SETTINGS, get_tour_level, calculate_bet_model
+from config import (UI_COLORS, SURFACES, BETTING_SETTINGS, KELLY_STAKING, DB_PATH,
+                     get_tour_level, calculate_bet_model)
 from database import db, TennisDatabase
 from match_analyzer import MatchAnalyzer
 from name_matcher import name_matcher
@@ -22,6 +23,12 @@ try:
 except ImportError:
     TennisAbstractScraper = None
     SCRAPER_AVAILABLE = False
+
+try:
+    from cloud_sync import sync_bet_to_cloud
+    CLOUD_SYNC_AVAILABLE = True
+except ImportError:
+    CLOUD_SYNC_AVAILABLE = False
 
 
 class Tooltip:
@@ -132,6 +139,7 @@ METRIC_TOOLTIPS = {
     "Recency": "How recent the form data is. Matches in last 7 days weighted 100%, 7-30 days 70%, 30-90 days 40%, older 20%.",
     "Recent Loss": "Penalty for coming off a recent loss. Loss in last 3 days = -0.10, last 7 days = -0.05. 5-set losses add extra penalty.",
     "Momentum": "Tournament/surface momentum. Bonus for recent wins on the same surface type. Max +0.10 bonus.",
+    "Perf Elo": "Performance Elo: results-based rating from the last 12 months. Shows how a player is actually performing vs their ATP ranking. Higher = outperforming their rank.",
 }
 
 
@@ -626,9 +634,25 @@ class BetSuggester:
         p1_odds = match.get('player1_odds')
         p2_odds = match.get('player2_odds')
 
+        # Skip match if either player has odds below minimum (liquidity filter)
+        min_opponent_odds = KELLY_STAKING.get("min_opponent_odds", 1.20)
+        if (p1_odds and p1_odds < min_opponent_odds) or (p2_odds and p2_odds < min_opponent_odds):
+            return {
+                'match': match,
+                'analysis': {},
+                'p1_probability': 0.5,
+                'p2_probability': 0.5,
+                'confidence': 0,
+                'value_bets': [],
+                'p1_value': None,
+                'p2_value': None,
+                'skipped': 'low_opponent_odds',
+            }
+
         # Get probability analysis (pass odds for WTA/unranked player estimation)
         analysis = self.analyzer.calculate_win_probability(
-            p1_id, p2_id, surface, match_date, p1_odds, p2_odds
+            p1_id, p2_id, surface, match_date, p1_odds, p2_odds,
+            tournament=match.get('tournament')
         )
 
         result = {
@@ -684,6 +708,15 @@ class BetSuggester:
         """
         matches = self.db.get_upcoming_matches(analyzed=False)
         results = []
+
+        # Filter out matches in the past (more than 6 hours ago to allow for timezone differences)
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M")
+        matches = [m for m in matches if m.get('date', '9999') >= cutoff]
+
+        # Apply same minimum liquidity filter as the upcoming matches list
+        MIN_MATCHED_LIQUIDITY = 25
+        matches = [m for m in matches if (m.get('total_matched') or 0) >= MIN_MATCHED_LIQUIDITY]
 
         for match in matches:
             p1_id = match.get('player1_id')
@@ -762,6 +795,11 @@ class BetSuggester:
                     bet['our_p1_prob'] = result['p1_probability']
                     bet['our_p2_prob'] = result['p2_probability']
                     bet['model'] = model  # Store the model
+                    # Include factor analysis for stake confidence adjustment
+                    bet['factor_analysis'] = {
+                        'factors': result.get('factors', {}),
+                        'weighted_advantage': result.get('weighted_advantage', 0),
+                    }
                     value_bets.append(bet)
 
         # Sort by EV
@@ -1212,7 +1250,8 @@ class BetSuggesterUI:
                 p2_odds = match.get('player2_odds')
 
                 analysis = self.suggester.analyzer.calculate_win_probability(
-                    p1_id, p2_id, surface, None, p1_odds, p2_odds
+                    p1_id, p2_id, surface, None, p1_odds, p2_odds,
+                    tournament=match.get('tournament')
                 )
                 confidence = analysis.get('confidence', 0)
 
@@ -1432,7 +1471,8 @@ class BetSuggesterUI:
             print(f"BET_SUGGESTER DEBUG: Analyzing match p1_id={p1_id} ({p1_name}) vs p2_id={p2_id} ({p2_name})")
             from match_analyzer import MatchAnalyzer
             analyzer = MatchAnalyzer()
-            result = analyzer.calculate_win_probability(p1_id, p2_id, surface, None, p1_odds, p2_odds)
+            result = analyzer.calculate_win_probability(p1_id, p2_id, surface, None, p1_odds, p2_odds,
+                                                       tournament=match.get('tournament'))
             p1_prob = result['p1_probability'] * 100
             p2_prob = result['p2_probability'] * 100
 
@@ -1461,6 +1501,17 @@ class BetSuggesterUI:
                         p1_has_value = True
                     elif p2_units > 0:
                         p2_has_value = True
+
+            # === CONTEXT WARNINGS (level mismatch, rust, near-breakout) ===
+            context_warnings = result.get('context_warnings', [])
+            if context_warnings:
+                ctx_frame = ttk.Frame(main_frame, style="Dark.TFrame")
+                ctx_frame.pack(fill=tk.X, pady=(0, 5))
+                for warn in context_warnings:
+                    tk.Label(ctx_frame, text=warn,
+                             font=("Segoe UI", 9, "bold"), fg="#f59e0b",
+                             bg=UI_COLORS["bg_dark"], padx=10, pady=3,
+                             anchor="w").pack(fill=tk.X)
 
             # === TOP ROW: Probabilities + Bet Buttons (compact) ===
             top_frame = ttk.Frame(main_frame, style="Card.TFrame", padding=8)
@@ -1612,7 +1663,7 @@ class BetSuggesterUI:
 
         factors = result.get('factors', {})
         factor_order = ['ranking', 'form', 'surface', 'h2h', 'fatigue', 'injury',
-                        'recent_loss', 'momentum']
+                        'recent_loss', 'momentum', 'performance_elo']
 
         # Header row
         header_frame = ttk.Frame(table_frame, style="Card.TFrame")
@@ -3227,6 +3278,26 @@ class BetSuggesterUI:
                            row_num,
                            on_click=lambda m=momentum, sfc=surface: self._show_momentum_details(m, p1_name, p2_name, sfc))
 
+        # 9. Performance Elo
+        row_num += 1
+        perf_elo_factor = factors.get('performance_elo', {})
+        perf_elo_data = perf_elo_factor.get('data', {})
+        p1_pe = perf_elo_data.get('p1_performance_elo', 0)
+        p2_pe = perf_elo_data.get('p2_performance_elo', 0)
+        p1_pe_has = perf_elo_data.get('p1_has_data', False)
+        p2_pe_has = perf_elo_data.get('p2_has_data', False)
+        p1_pe_rank = perf_elo_data.get('p1_performance_rank')
+        p2_pe_rank = perf_elo_data.get('p2_performance_rank')
+        p1_rank_str = f" (#{p1_pe_rank})" if p1_pe_rank else ""
+        p2_rank_str = f" (#{p2_pe_rank})" if p2_pe_rank else ""
+        p1_pe_str = (f"{p1_pe:.0f}{p1_rank_str}" if p1_pe_has else f"~{p1_pe:.0f}")
+        p2_pe_str = (f"{p2_pe:.0f}{p2_rank_str}" if p2_pe_has else f"~{p2_pe:.0f}")
+        self._add_table_row_v2(table_frame, "9. Perf Elo",
+                           p1_pe_str, p2_pe_str,
+                           perf_elo_factor.get('advantage', 0),
+                           perf_elo_factor.get('weight', 0.12),
+                           row_num)
+
         # Separator
         ttk.Separator(table_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
@@ -3413,7 +3484,8 @@ class BetSuggesterUI:
             'opponent_quality': 'Opponent Quality',
             'recency': 'Match Recency',
             'recent_loss': 'Recent Loss',
-            'momentum': 'Momentum'
+            'momentum': 'Momentum',
+            'performance_elo': 'Performance Elo'
         }
 
         for factor_key, factor_data in factors.items():
@@ -4516,13 +4588,20 @@ class BetSuggesterUI:
                     skipped += 1
                     continue
 
-                # Extract full factor data for backtesting
+                # Also check if ANY bet exists for this match (prevents betting same match twice)
+                if db.check_match_already_bet(match_description, tournament):
+                    skipped += 1
+                    continue
+
+                recommended_stake = bet.get('recommended_units', 1)
+
+                # Extract full factor data for display
                 factor_scores = None
                 if analysis and 'factors' in analysis:
                     factors = analysis['factors']
                     is_p1_bet = bet.get('selection') == 'player1'
 
-                    # Store full factor data for display and backtesting
+                    # Store full factor data for display
                     factor_scores = {
                         'is_p1_bet': is_p1_bet,
                         'p1_name': match.get('player1_name', 'P1'),
@@ -4555,7 +4634,7 @@ class BetSuggesterUI:
                     'player2': match.get('player2_name', ''),
                     'market': 'Match Winner',
                     'selection': selection,
-                    'stake': bet.get('recommended_units', 1),
+                    'stake': recommended_stake,
                     'odds': bet.get('odds'),
                     'our_probability': bet.get('our_probability'),
                     'implied_probability': bet.get('implied_probability'),
@@ -4579,20 +4658,45 @@ class BetSuggesterUI:
                     skipped += 1
                     continue
 
-                db.add_bet(db_bet)
+                bet_id = db.add_bet(db_bet)
                 added += 1
                 added_this_batch.add(batch_key)
+
+                # Sync to cloud for Discord monitor
+                if CLOUD_SYNC_AVAILABLE:
+                    try:
+                        db_bet['id'] = bet_id
+                        sync_bet_to_cloud(db_bet)
+                    except Exception:
+                        pass  # Silent fail - cloud sync is optional
 
             # Build success message
             msg_parts = [f"Added {added} bet(s) to the tracker."]
             if skipped > 0:
-                msg_parts.append(f"{skipped} duplicate(s) skipped.")
+                msg_parts.append(f"{skipped} skipped (duplicates/data quality).")
             if skipped_unknown > 0:
                 msg_parts.append(f"{skipped_unknown} unknown player bet(s) blocked.")
             messagebox.showinfo("Success", "\n".join(msg_parts))
 
             # Disable button after adding
             self.add_all_btn.config(state=tk.DISABLED)
+
+            # Refresh bet tracker if it's open
+            try:
+                from bet_tracker import BetTrackerUI
+                if BetTrackerUI._instance is not None and BetTrackerUI._root_window is not None:
+                    if BetTrackerUI._root_window.winfo_exists():
+                        BetTrackerUI._instance._refresh_data()
+            except Exception:
+                pass
+
+            # Update main dashboard stats
+            try:
+                main_window = self.root.nametowidget('.')
+                if hasattr(main_window, 'main_app') and hasattr(main_window.main_app, '_update_stats'):
+                    main_window.main_app._update_stats()
+            except Exception:
+                pass
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to add bets: {e}")

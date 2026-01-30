@@ -641,10 +641,12 @@ class TennisExplorerImportDialog:
                         continue
 
                     # Determine win/loss - check if our player name is first (winner)
+                    # On TE player pages, the page's player is always listed first in the match cell
                     player_parts = player_name.lower().split()
                     player1_lower = player1.lower()
 
-                    won = any(part in player1_lower for part in player_parts if len(part) > 2)
+                    # Check with len > 1 to include short surnames (Xu, Li, Lu, Wu, He, etc.)
+                    won = any(part in player1_lower for part in player_parts if len(part) > 1)
                     opponent = player2 if won else player1
 
                     # Skip matches with invalid tournament names (just years like "2025", "2024")
@@ -712,9 +714,21 @@ class TennisExplorerImportDialog:
         try:
             imported, skipped = self._do_import()
 
+            # Recalculate Performance Elo if matches were imported
+            perf_elo_msg = ""
+            if imported > 0:
+                try:
+                    self.status_var.set("Recalculating Performance Elo ratings...")
+                    self.dialog.update()
+                    from performance_elo import recalculate_all_performance_elo
+                    perf_elo_count = recalculate_all_performance_elo(db)
+                    perf_elo_msg = f"\nPerformance Elo updated for {perf_elo_count} players."
+                except Exception as elo_err:
+                    perf_elo_msg = f"\nPerformance Elo update failed: {elo_err}"
+
             messagebox.showinfo("Import Complete",
                 f"Successfully imported {imported} matches.\n"
-                f"Skipped {skipped} duplicates.")
+                f"Skipped {skipped} duplicates.{perf_elo_msg}")
 
             self.status_var.set(f"Imported {imported} matches, skipped {skipped} duplicates")
 
@@ -826,7 +840,7 @@ class TennisExplorerImportDialog:
 
                 # Insert match
                 cursor.execute("""
-                    INSERT INTO matches (id, tournament, surface, date, round,
+                    INSERT OR IGNORE INTO matches (id, tournament, surface, date, round,
                                         winner_id, winner_name, loser_id, loser_name, score)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
