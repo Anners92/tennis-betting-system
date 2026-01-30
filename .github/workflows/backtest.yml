@@ -62,7 +62,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set data directory
-        run: echo "TENNIS_DATA_DIR=${{ github.workspace }}/data" >> $GITHUB_ENV
+        run: echo "TENNIS_DATA_DIR=${{ github.workspace }}" >> $GITHUB_ENV
 
       - name: Create required directories
         run: mkdir -p output logs

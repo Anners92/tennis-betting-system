@@ -33,8 +33,11 @@ def setup_environment(db_path: str = None):
         sys.path.insert(0, str(src_dir))
 
     if db_path:
-        data_dir = str(Path(db_path).parent)
-        os.environ['TENNIS_DATA_DIR'] = data_dir
+        # config.py appends /data to BASE_DIR, so TENNIS_DATA_DIR must be
+        # the parent of the data/ folder (i.e. two levels up from the .db file)
+        data_dir = Path(db_path).parent          # .../data
+        base_dir = str(data_dir.parent)           # .../  (workspace root)
+        os.environ['TENNIS_DATA_DIR'] = base_dir
 
 
 # ============================================================================
@@ -99,9 +102,6 @@ class BacktestRunner:
 
     def fetch_matches(self) -> List[Dict]:
         """Fetch historical matches from database."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-
         # Determine date range
         if self.from_date:
             start_date = self.from_date
@@ -127,10 +127,11 @@ class BacktestRunner:
               AND l.name IS NOT NULL
             ORDER BY m.date ASC
         """
-        cursor.execute(query, (start_date, end_date))
-        columns = [desc[0] for desc in cursor.description]
-        matches = [dict(zip(columns, row)) for row in cursor.fetchall()]
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (start_date, end_date))
+            columns = [desc[0] for desc in cursor.description]
+            matches = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
         # Apply sample limit
         if self.sample_size > 0 and len(matches) > self.sample_size:
