@@ -1056,6 +1056,7 @@ async def cmd_refresh(ctx):
             else:
                 selection_ids = get_selection_ids_for_bet(bet)
 
+            settled_via_bf = False
             if selection_ids:
                 market_info = {'selection_ids': selection_ids}
                 outcome = determine_result(bet, market_info, result)
@@ -1070,10 +1071,12 @@ async def cmd_refresh(ctx):
                     previously_live.pop(bet_id, None)
                     pl_str = f"+{profit:.2f}u" if profit >= 0 else f"{profit:.2f}u"
                     settled_results.append(f"{'W' if bet_result == 'Win' else 'L'} {shorten_match(match_desc)} ({pl_str}) [BF]")
-                else:
-                    errors.append(f"{shorten_match(match_desc)}: no winner on Betfair")
-            else:
-                errors.append(f"{shorten_match(match_desc)}: no selection_ids")
+                    settled_via_bf = True
+
+            if not settled_via_bf:
+                # Betfair says CLOSED but couldn't settle (no selection_ids or no winner) — try TE
+                print(f"[{timestamp()}] [PATH: refresh_bf_to_te] {match_desc}: CLOSED but can't settle via BF, trying TE")
+                unsettled_bets.append(bet)
 
         elif status in ['ACTIVE', 'SUSPENDED']:
             now_live.append(shorten_match(match_desc))
@@ -1091,7 +1094,7 @@ async def cmd_refresh(ctx):
     # ---- PHASE 2: Check Tennis Explorer for remaining bets ----
     if unsettled_bets:
         await ctx.send(f"Checking Tennis Explorer for {len(unsettled_bets)} unresolved bet(s)...")
-        te_results = fetch_completed_results(days_back=2)
+        te_results = fetch_completed_results(days_back=3)
 
         for bet in unsettled_bets:
             bet_id = bet.get('id')
@@ -1277,14 +1280,13 @@ async def before_monitor():
         if betfair.login():
             print(f"[{timestamp()}] Betfair login successful")
         else:
-            print(f"[{timestamp()}] Betfair login failed")
-            return
+            print(f"[{timestamp()}] Betfair login failed — monitor will use TE fallback via !refresh")
 
     # On startup, find ALL currently live bets and add to previously_live WITHOUT alerting
     # This prevents duplicate alerts when monitor restarts
     print(f"[{timestamp()}] Checking for currently live bets (no alerts on startup)...")
     pending = supabase.get_pending_bets()
-    markets = betfair.get_inplay_tennis()
+    markets = betfair.get_inplay_tennis() if betfair.session_token else []
 
     for bet in pending:
         bet_id = bet.get('id')
@@ -1328,10 +1330,13 @@ async def before_monitor():
                         print(f"[{timestamp()}] Could not determine winner at startup (no WINNER runner)")
                 else:
                     print(f"[{timestamp()}] SKIPPING startup settlement - no selection_ids for {bet.get('match_description')}")
-            elif status in ['ACTIVE', 'SUSPENDED', 'OPEN', None]:
-                # Still live, add to tracking with selection_ids
+            elif status in ['ACTIVE', 'SUSPENDED', 'OPEN']:
+                # Still live on Betfair, add to tracking with selection_ids
                 sel_ids = get_selection_ids_for_bet(bet) or {}
                 previously_live[bet_id] = {'bet': bet, 'market': {'market_id': market_id, 'selection_ids': sel_ids}}
+            elif status is None:
+                # Market expired/gone on Betfair — leave for !refresh to settle via TE
+                print(f"[{timestamp()}] Startup: {bet.get('match_description')} - market expired, use !refresh to settle")
 
     # Immediately sync live status from local DB (source of truth for is_live)
     try:

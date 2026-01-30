@@ -271,3 +271,37 @@ The cloud backtester used ranking-based Elo as a proxy for market odds, making P
 - Overall database coverage: ~43% (many matches are Challengers/ITF)
 
 ---
+
+## Fix: Overnight !refresh Resilience
+
+### Problem
+When the PC was turned off overnight with bets in play/pending, the Discord bot broke on restart. The `!refresh` command couldn't settle overnight matches because:
+1. Betfair markets expire ~90 minutes after settlement — overnight markets are gone
+2. When Betfair reported a market as CLOSED but selection_ids were missing (bot was off when match went live), the bet went to the error list and **never fell through to Tennis Explorer**
+3. `before_monitor` exited early if Betfair login failed, preventing the monitor loop from starting
+4. Expired Betfair markets (returning None) were added to `previously_live` where they sat forever
+
+### What Was Changed
+
+**`local_monitor.py`** — 4 fixes:
+
+1. **`cmd_refresh` Phase 1 fall-through to TE** — When Betfair says CLOSED but we can't settle (no selection_ids or no winner from `determine_result`), the bet now goes to `unsettled_bets` for Tennis Explorer Phase 2 instead of dead-ending in the error list. Uses `settled_via_bf` flag to track.
+
+2. **`before_monitor` no longer exits early** — Removed the `return` on Betfair login failure. The monitor loop now starts regardless. Betfair API calls are guarded (`if betfair.session_token`).
+
+3. **Expired markets not added to `previously_live`** — Separated `None` status (expired market) from `ACTIVE`/`SUSPENDED`/`OPEN` in `before_monitor`. Expired markets log a message suggesting `!refresh` instead of being pointlessly tracked.
+
+4. **Increased TE lookback from 2 to 3 days** — Handles weekend scenarios where PC was off Friday evening to Monday morning.
+
+### Files Modified
+- `local_monitor.py` (root + synced to dist)
+
+### Expected Overnight Flow
+1. Morning: start bot → `before_monitor` runs, Betfair login succeeds
+2. Type `!refresh` → Phase 1 tries Betfair for each pending bet
+3. Most overnight markets expired (status=None) → sent to Phase 2
+4. Any CLOSED markets without selection_ids → also sent to Phase 2
+5. Phase 2: Tennis Explorer scrapes last 3 days of results
+6. Matches found → settled, removed from pending, result alerts sent to Discord
+
+---
