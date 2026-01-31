@@ -126,8 +126,8 @@ class BacktestRunner:
         query = """
             SELECT m.id, m.date, m.tournament, m.surface,
                    m.winner_id, m.loser_id, m.score,
-                   w.name as winner_name, w.current_ranking as winner_rank,
-                   l.name as loser_name, l.current_ranking as loser_rank
+                   w.name as winner_name, COALESCE(m.winner_rank, w.current_ranking) as winner_rank,
+                   l.name as loser_name, COALESCE(m.loser_rank, l.current_ranking) as loser_rank
             FROM matches m
             LEFT JOIN players w ON m.winner_id = w.id
             LEFT JOIN players l ON m.loser_id = l.id
@@ -243,12 +243,14 @@ class BacktestRunner:
                 p1_odds, p2_odds = self.calculate_odds_proxy(p1_rank, p2_rank)
                 self.odds_source_counts['proxy'] += 1
 
-            # 4. Run full model analysis
+            # 4. Run full model analysis (pass match-time rankings to avoid lookahead bias)
             analysis = self.analyzer.calculate_win_probability(
                 p1_id, p2_id, surface,
                 match_date=match['date'],
                 p1_odds=p1_odds, p2_odds=p2_odds,
-                tournament=match['tournament']
+                tournament=match['tournament'],
+                p1_rank_override=p1_rank,
+                p2_rank_override=p2_rank
             )
 
             p1_prob = analysis.get('p1_probability', 0.5)

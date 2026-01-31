@@ -109,7 +109,8 @@ class MatchAnalyzer:
     # =========================================================================
 
     def calculate_form_score(self, player_id: int, num_matches: int = None,
-                             as_of_date: str = None, match_level: int = None) -> Dict:
+                             as_of_date: str = None, match_level: int = None,
+                             player_rank_override: int = None) -> Dict:
         """
         Calculate form score for a player based on recent matches.
         Returns score 0-100 with breakdown.
@@ -144,7 +145,7 @@ class MatchAnalyzer:
         player_canonical = self.db.get_canonical_id(player_id)
 
         # Look up player's own ranking for Elo-expected scoring
-        player_rank = self._get_ranking_by_id(player_id) or 500
+        player_rank = player_rank_override or self._get_ranking_by_id(player_id) or 500
         player_elo = self._ranking_to_elo(player_rank)
 
         # Level relevance lookup for match context
@@ -315,45 +316,65 @@ class MatchAnalyzer:
     # SURFACE PERFORMANCE
     # =========================================================================
 
-    def get_surface_stats(self, player_id: int, surface: str) -> Dict:
+    def get_surface_stats(self, player_id: int, surface: str, as_of_date: str = None) -> Dict:
         """
         Get surface performance stats combining career and recent data.
+        as_of_date: When set (backtest), only consider matches before this date.
         """
-        # Get aggregated stats from database
-        stats = self.db.get_surface_stats(player_id, surface)
-
-        if not stats:
-            # Calculate from scratch
-            return self._calculate_surface_stats(player_id, surface)
-
-        stat = stats[0]
-        career_win_rate = stat.get('win_rate') or 0.5
-        career_matches = stat.get('matches_played') or 0
-
-        # Get recent (last 2 years) surface matches
-        two_years_ago = (datetime.now() - timedelta(days=365 * SURFACE_SETTINGS["recent_years"])).strftime("%Y-%m-%d")
-        recent_matches = self.db.get_player_matches(player_id, surface=surface, since_date=two_years_ago)
-
-        # Use canonical ID for alias matching
         player_canonical = self.db.get_canonical_id(player_id)
-        recent_wins = sum(1 for m in recent_matches if self.db.get_canonical_id(m['winner_id']) == player_canonical)
-        recent_matches_count = len(recent_matches)
-        recent_win_rate = recent_wins / recent_matches_count if recent_matches_count > 0 else career_win_rate
+
+        if as_of_date:
+            # Backtest: compute from raw matches before as_of_date
+            all_matches = self.db.get_player_matches(player_id, surface=surface)
+            all_matches = [m for m in all_matches if m.get('date') and m['date'][:10] < as_of_date]
+
+            career_matches = len(all_matches)
+            if career_matches == 0:
+                return {
+                    "surface": surface, "career_matches": 0, "career_win_rate": 0.5,
+                    "recent_matches": 0, "recent_win_rate": 0.5,
+                    "combined_win_rate": 0.5, "score": 50,
+                    "avg_games_won": 0, "avg_games_lost": 0, "has_data": False
+                }
+
+            career_wins = sum(1 for m in all_matches if self.db.get_canonical_id(m['winner_id']) == player_canonical)
+            career_win_rate = career_wins / career_matches
+
+            ref_date = datetime.strptime(as_of_date, "%Y-%m-%d")
+            two_years_ago = (ref_date - timedelta(days=365 * SURFACE_SETTINGS["recent_years"])).strftime("%Y-%m-%d")
+            recent_matches = [m for m in all_matches if m.get('date') and m['date'][:10] >= two_years_ago]
+            recent_wins = sum(1 for m in recent_matches if self.db.get_canonical_id(m['winner_id']) == player_canonical)
+            recent_matches_count = len(recent_matches)
+            recent_win_rate = recent_wins / recent_matches_count if recent_matches_count > 0 else career_win_rate
+            avg_games_won = 0
+            avg_games_lost = 0
+        else:
+            # Live: use pre-aggregated stats from database
+            stats = self.db.get_surface_stats(player_id, surface)
+
+            if not stats:
+                return self._calculate_surface_stats(player_id, surface)
+
+            stat = stats[0]
+            career_win_rate = stat.get('win_rate') or 0.5
+            career_matches = stat.get('matches_played') or 0
+
+            two_years_ago = (datetime.now() - timedelta(days=365 * SURFACE_SETTINGS["recent_years"])).strftime("%Y-%m-%d")
+            recent_matches_raw = self.db.get_player_matches(player_id, surface=surface, since_date=two_years_ago)
+            recent_wins = sum(1 for m in recent_matches_raw if self.db.get_canonical_id(m['winner_id']) == player_canonical)
+            recent_matches_count = len(recent_matches_raw)
+            recent_win_rate = recent_wins / recent_matches_count if recent_matches_count > 0 else career_win_rate
+            avg_games_won = stat.get('avg_games_won', 0)
+            avg_games_lost = stat.get('avg_games_lost', 0)
 
         # Weighted combination
         career_w = SURFACE_SETTINGS["career_weight"]
         recent_w = SURFACE_SETTINGS["recent_weight"]
 
-        # Adjust weights based on sample size
-        # Low career sample = trust career less, but don't over-trust recent either
         if career_matches < SURFACE_SETTINGS["min_matches_reliable"]:
-            # Scale down career weight proportionally
             career_reliability = career_matches / SURFACE_SETTINGS["min_matches_reliable"]
             career_w *= career_reliability
-            # Don't give all remaining weight to recent - blend with neutral
-            # This prevents wild swings from small recent samples
             recent_w = min(recent_w, SURFACE_SETTINGS["recent_weight"])
-            # Remaining weight goes to neutral baseline (0.5)
             neutral_w = 1 - career_w - recent_w
         else:
             neutral_w = 0
@@ -368,9 +389,9 @@ class MatchAnalyzer:
             "recent_win_rate": round(recent_win_rate, 3),
             "combined_win_rate": round(combined_win_rate, 3),
             "score": round(combined_win_rate * 100, 1),
-            "avg_games_won": stat.get('avg_games_won', 0),
-            "avg_games_lost": stat.get('avg_games_lost', 0),
-            "has_data": (career_matches >= 5) or (recent_matches_count >= 5)  # Need at least 5 surface matches
+            "avg_games_won": avg_games_won,
+            "avg_games_lost": avg_games_lost,
+            "has_data": (career_matches >= 5) or (recent_matches_count >= 5)
         }
 
     def _calculate_surface_stats(self, player_id: int, surface: str) -> Dict:
@@ -496,13 +517,15 @@ class MatchAnalyzer:
 
     def get_ranking_factors(self, player1_id: int, player2_id: int,
                             p1_odds: float = None, p2_odds: float = None,
-                            p1_effective_rank: int = None, p2_effective_rank: int = None) -> Dict:
+                            p1_effective_rank: int = None, p2_effective_rank: int = None,
+                            p1_rank_override: int = None, p2_rank_override: int = None) -> Dict:
         """
         Analyze ranking comparison between two players.
         Uses Elo-like probability for more accurate skill gap estimation.
 
         For WTA/unranked players, uses Betfair odds to estimate ranking.
         p1_effective_rank/p2_effective_rank: Override rankings from breakout detection.
+        p1_rank_override/p2_rank_override: Match-time rankings for backtesting.
         """
         p1 = self.db.get_player(player1_id) or {}
         p2 = self.db.get_player(player2_id) or {}
@@ -521,6 +544,12 @@ class MatchAnalyzer:
         p2_cache_found = p2_rank is not None
         if p2_rank is None:
             p2_rank = p2.get('current_ranking') or p2.get('ranking')
+
+        # Backtest: override with match-time rankings
+        if p1_rank_override is not None:
+            p1_rank = p1_rank_override
+        if p2_rank_override is not None:
+            p2_rank = p2_rank_override
 
 
         # For players without rankings, use lowest ranked player as default
@@ -611,20 +640,33 @@ class MatchAnalyzer:
 
     def get_performance_elo_factors(self, player1_id: int, player2_id: int,
                                      p1_odds: float = None, p2_odds: float = None,
-                                     p1_effective_rank: int = None, p2_effective_rank: int = None) -> Dict:
+                                     p1_effective_rank: int = None, p2_effective_rank: int = None,
+                                     p1_rank_override: int = None, p2_rank_override: int = None) -> Dict:
         """
         Analyze Performance Elo comparison between two players.
         Performance Elo = actual results-based Elo from the last 12 months.
         Falls back to ranking-derived Elo if no Performance Elo is available.
         p1_effective_rank/p2_effective_rank: Override for fallback ranking (breakout).
+        p1_rank_override/p2_rank_override: Match-time rankings for backtesting.
         """
-        p1_perf_elo = self.db.get_player_performance_elo(player1_id)
-        p2_perf_elo = self.db.get_player_performance_elo(player2_id)
-        p1_perf_rank = self.db.get_player_performance_rank(player1_id)
-        p2_perf_rank = self.db.get_player_performance_rank(player2_id)
+        # Backtest: use match-time ranking-derived Elo (no historical perf Elo available)
+        if p1_rank_override is not None:
+            p1_perf_elo = self._ranking_to_elo(p1_rank_override)
+            p1_has_data = True
+            p1_perf_rank = None
+        else:
+            p1_perf_elo = self.db.get_player_performance_elo(player1_id)
+            p1_perf_rank = self.db.get_player_performance_rank(player1_id)
+            p1_has_data = p1_perf_elo is not None
 
-        p1_has_data = p1_perf_elo is not None
-        p2_has_data = p2_perf_elo is not None
+        if p2_rank_override is not None:
+            p2_perf_elo = self._ranking_to_elo(p2_rank_override)
+            p2_has_data = True
+            p2_perf_rank = None
+        else:
+            p2_perf_elo = self.db.get_player_performance_elo(player2_id)
+            p2_perf_rank = self.db.get_player_performance_rank(player2_id)
+            p2_has_data = p2_perf_elo is not None
 
         # Fallback to ranking-derived Elo (use effective rank if breakout detected)
         if not p1_has_data:
@@ -685,44 +727,68 @@ class MatchAnalyzer:
     # HEAD TO HEAD
     # =========================================================================
 
-    def get_h2h(self, player1_id: int, player2_id: int, surface: str = None) -> Dict:
+    def get_h2h(self, player1_id: int, player2_id: int, surface: str = None,
+                before_date: str = None) -> Dict:
         """
         Get head-to-head record between two players.
+        before_date: When set (backtest), only consider matches before this date.
         """
-        h2h = self.db.get_h2h(player1_id, player2_id)
+        p1_canonical = self.db.get_canonical_id(player1_id)
 
-        if not h2h:
-            # Calculate from match history - use canonical IDs for alias matching
+        if before_date:
+            # Backtest: skip pre-computed table, calculate from raw matches before date
             matches = self.db.get_h2h_matches(player1_id, player2_id)
-            p1_canonical = self.db.get_canonical_id(player1_id)
+            matches = [m for m in matches if m.get('date') and m['date'][:10] < before_date]
             p1_wins = sum(1 for m in matches if self.db.get_canonical_id(m['winner_id']) == p1_canonical)
             p2_wins = len(matches) - p1_wins
 
-            h2h = {
-                'p1_wins': p1_wins,
-                'p2_wins': p2_wins,
-                'p1_wins_by_surface': {},
-                'p2_wins_by_surface': {},
-            }
+            # Surface-specific from filtered matches
+            surface_p1 = 0
+            surface_p2 = 0
+            if surface:
+                surface_matches = [m for m in matches if m.get('surface', '').lower() == surface.lower()]
+                surface_p1 = sum(1 for m in surface_matches if self.db.get_canonical_id(m['winner_id']) == p1_canonical)
+                surface_p2 = len(surface_matches) - surface_p1
 
-        total = h2h['p1_wins'] + h2h['p2_wins']
+            total = p1_wins + p2_wins
+            recent_matches = matches[-3:] if matches else []
+            recent_p1 = sum(1 for m in recent_matches if self.db.get_canonical_id(m['winner_id']) == p1_canonical)
+            recent_p2 = len(recent_matches) - recent_p1
+        else:
+            h2h = self.db.get_h2h(player1_id, player2_id)
 
-        # Surface-specific H2H
-        surface_p1 = 0
-        surface_p2 = 0
-        if surface:
-            surface_p1 = h2h.get('p1_wins_by_surface', {}).get(surface, 0)
-            surface_p2 = h2h.get('p2_wins_by_surface', {}).get(surface, 0)
+            if not h2h:
+                # Calculate from match history - use canonical IDs for alias matching
+                matches = self.db.get_h2h_matches(player1_id, player2_id)
+                p1_wins = sum(1 for m in matches if self.db.get_canonical_id(m['winner_id']) == p1_canonical)
+                p2_wins = len(matches) - p1_wins
 
-        # Recent H2H (last 3 matches) - use canonical IDs
-        recent_matches = self.db.get_h2h_matches(player1_id, player2_id)[:3]
-        p1_canonical = self.db.get_canonical_id(player1_id)
-        recent_p1 = sum(1 for m in recent_matches if self.db.get_canonical_id(m['winner_id']) == p1_canonical)
-        recent_p2 = len(recent_matches) - recent_p1
+                h2h = {
+                    'p1_wins': p1_wins,
+                    'p2_wins': p2_wins,
+                    'p1_wins_by_surface': {},
+                    'p2_wins_by_surface': {},
+                }
+
+            p1_wins = h2h['p1_wins']
+            p2_wins = h2h['p2_wins']
+            total = p1_wins + p2_wins
+
+            # Surface-specific H2H
+            surface_p1 = 0
+            surface_p2 = 0
+            if surface:
+                surface_p1 = h2h.get('p1_wins_by_surface', {}).get(surface, 0)
+                surface_p2 = h2h.get('p2_wins_by_surface', {}).get(surface, 0)
+
+            # Recent H2H (last 3 matches) - use canonical IDs
+            recent_matches = self.db.get_h2h_matches(player1_id, player2_id)[:3]
+            recent_p1 = sum(1 for m in recent_matches if self.db.get_canonical_id(m['winner_id']) == p1_canonical)
+            recent_p2 = len(recent_matches) - recent_p1
 
         # Calculate advantage score
         if total > 0:
-            h2h_advantage = (h2h['p1_wins'] - h2h['p2_wins']) / total
+            h2h_advantage = (p1_wins - p2_wins) / total
         else:
             h2h_advantage = 0
 
@@ -741,9 +807,9 @@ class MatchAnalyzer:
 
         return {
             "total_matches": total,
-            "p1_wins": h2h['p1_wins'],
-            "p2_wins": h2h['p2_wins'],
-            "p1_win_rate": h2h['p1_wins'] / total if total > 0 else 0.5,
+            "p1_wins": p1_wins,
+            "p2_wins": p2_wins,
+            "p1_win_rate": p1_wins / total if total > 0 else 0.5,
             "surface": surface,
             "surface_p1_wins": surface_p1,
             "surface_p2_wins": surface_p2,
@@ -998,10 +1064,20 @@ class MatchAnalyzer:
     # INJURY STATUS
     # =========================================================================
 
-    def get_injury_status(self, player_id: int) -> Dict:
+    def get_injury_status(self, player_id: int, as_of_date: str = None) -> Dict:
         """
         Get injury status for a player.
+        as_of_date: When set (backtest), return neutral — no historical injury data.
         """
+        if as_of_date:
+            return {
+                "score": 100,
+                "status": "Healthy",
+                "active_injuries": 0,
+                "injuries": [],
+                "retirement_rate": 0,
+            }
+
         injuries = self.db.get_player_injuries(player_id, active_only=True)
 
         # Calculate retirement rate from recent matches
@@ -1227,14 +1303,19 @@ class MatchAnalyzer:
             "has_data": len(matches) >= 3
         }
 
-    def calculate_recent_loss_penalty(self, player_id: int) -> Dict:
+    def calculate_recent_loss_penalty(self, player_id: int, as_of_date: str = None) -> Dict:
         """
         Calculate penalty for coming off a recent loss.
         Players who just lost may have psychological or physical issues.
+        as_of_date: When set (backtest), only consider matches before this date.
 
         Returns penalty from 0 to -0.2 (negative = penalty).
         """
-        matches = self.db.get_player_matches(player_id, limit=3)
+        matches = self.db.get_player_matches(player_id, limit=10 if as_of_date else 3)
+
+        if as_of_date:
+            matches = [m for m in matches if m.get('date') and m['date'][:10] < as_of_date]
+            matches = matches[:3]
 
         if not matches:
             return {
@@ -1243,7 +1324,7 @@ class MatchAnalyzer:
                 "has_recent_loss": False
             }
 
-        today = datetime.now()
+        today = datetime.strptime(as_of_date, "%Y-%m-%d") if as_of_date else datetime.now()
         penalty = 0
         details = []
 
@@ -1290,10 +1371,11 @@ class MatchAnalyzer:
             "has_recent_loss": penalty > 0
         }
 
-    def calculate_momentum(self, player_id: int, surface: str) -> Dict:
+    def calculate_momentum(self, player_id: int, surface: str, as_of_date: str = None) -> Dict:
         """
         Calculate tournament/recent momentum bonus.
         Players with wins in the current tournament or on same surface get a bonus.
+        as_of_date: When set (backtest), only consider matches before this date.
 
         Returns bonus from 0 to 0.1 (positive = momentum bonus).
         """
@@ -1301,7 +1383,11 @@ class MatchAnalyzer:
         win_bonus = MOMENTUM_SETTINGS["win_bonus"]
         max_bonus = MOMENTUM_SETTINGS["max_bonus"]
 
-        matches = self.db.get_player_matches(player_id, limit=5)
+        matches = self.db.get_player_matches(player_id, limit=10 if as_of_date else 5)
+
+        if as_of_date:
+            matches = [m for m in matches if m.get('date') and m['date'][:10] < as_of_date]
+            matches = matches[:5]
 
         if not matches:
             return {
@@ -1311,7 +1397,7 @@ class MatchAnalyzer:
                 "has_momentum": False
             }
 
-        today = datetime.now()
+        today = datetime.strptime(as_of_date, "%Y-%m-%d") if as_of_date else datetime.now()
         bonus = 0
         wins_counted = 0
         details = []
@@ -1675,7 +1761,9 @@ class MatchAnalyzer:
     def calculate_win_probability(self, player1_id: int, player2_id: int,
                                    surface: str, match_date: str = None,
                                    p1_odds: float = None, p2_odds: float = None,
-                                   tournament: str = None) -> Dict:
+                                   tournament: str = None,
+                                   p1_rank_override: int = None,
+                                   p2_rank_override: int = None) -> Dict:
         """
         Calculate win probability for player1 against player2.
         Returns comprehensive analysis with probability.
@@ -1685,6 +1773,10 @@ class MatchAnalyzer:
         """
         match_date = (match_date or datetime.now().strftime("%Y-%m-%d"))[:10]
 
+        # Determine if this is a backtest call (rank overrides = historical match)
+        is_backtest = p1_rank_override is not None or p2_rank_override is not None
+        backtest_date = match_date if is_backtest else None
+
         # Compute match context (level mismatch detection)
         match_context = self.get_match_context(player1_id, player2_id, tournament, match_date)
         context_match_level = match_context.get('match_level')
@@ -1693,25 +1785,25 @@ class MatchAnalyzer:
         # Get all factor scores in parallel for better performance
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
-                'p1_form': executor.submit(self.calculate_form_score, player1_id, None, match_date, context_match_level),
-                'p2_form': executor.submit(self.calculate_form_score, player2_id, None, match_date, context_match_level),
-                'p1_surface': executor.submit(self.get_surface_stats, player1_id, surface),
-                'p2_surface': executor.submit(self.get_surface_stats, player2_id, surface),
-                'rankings': executor.submit(self.get_ranking_factors, player1_id, player2_id, p1_odds, p2_odds),
-                'h2h': executor.submit(self.get_h2h, player1_id, player2_id, surface),
+                'p1_form': executor.submit(self.calculate_form_score, player1_id, None, match_date, context_match_level, p1_rank_override),
+                'p2_form': executor.submit(self.calculate_form_score, player2_id, None, match_date, context_match_level, p2_rank_override),
+                'p1_surface': executor.submit(self.get_surface_stats, player1_id, surface, backtest_date),
+                'p2_surface': executor.submit(self.get_surface_stats, player2_id, surface, backtest_date),
+                'rankings': executor.submit(self.get_ranking_factors, player1_id, player2_id, p1_odds, p2_odds, None, None, p1_rank_override, p2_rank_override),
+                'h2h': executor.submit(self.get_h2h, player1_id, player2_id, surface, backtest_date),
                 'p1_fatigue': executor.submit(self.calculate_fatigue, player1_id, match_date),
                 'p2_fatigue': executor.submit(self.calculate_fatigue, player2_id, match_date),
-                'p1_injury': executor.submit(self.get_injury_status, player1_id),
-                'p2_injury': executor.submit(self.get_injury_status, player2_id),
+                'p1_injury': executor.submit(self.get_injury_status, player1_id, backtest_date),
+                'p2_injury': executor.submit(self.get_injury_status, player2_id, backtest_date),
                 'p1_opp_quality': executor.submit(self.calculate_opponent_quality, player1_id),
                 'p2_opp_quality': executor.submit(self.calculate_opponent_quality, player2_id),
                 'p1_recency': executor.submit(self.calculate_recency_score, player1_id),
                 'p2_recency': executor.submit(self.calculate_recency_score, player2_id),
-                'p1_loss_penalty': executor.submit(self.calculate_recent_loss_penalty, player1_id),
-                'p2_loss_penalty': executor.submit(self.calculate_recent_loss_penalty, player2_id),
-                'p1_momentum': executor.submit(self.calculate_momentum, player1_id, surface),
-                'p2_momentum': executor.submit(self.calculate_momentum, player2_id, surface),
-                'perf_elo': executor.submit(self.get_performance_elo_factors, player1_id, player2_id, p1_odds, p2_odds),
+                'p1_loss_penalty': executor.submit(self.calculate_recent_loss_penalty, player1_id, backtest_date),
+                'p2_loss_penalty': executor.submit(self.calculate_recent_loss_penalty, player2_id, backtest_date),
+                'p1_momentum': executor.submit(self.calculate_momentum, player1_id, surface, backtest_date),
+                'p2_momentum': executor.submit(self.calculate_momentum, player2_id, surface, backtest_date),
+                'perf_elo': executor.submit(self.get_performance_elo_factors, player1_id, player2_id, p1_odds, p2_odds, None, None, p1_rank_override, p2_rank_override),
                 'p1_breakout': executor.submit(self.calculate_breakout_signal, player1_id, match_date),
                 'p2_breakout': executor.submit(self.calculate_breakout_signal, player2_id, match_date),
             }
@@ -1749,11 +1841,13 @@ class MatchAnalyzer:
         if either_breakout:
             rankings = self.get_ranking_factors(
                 player1_id, player2_id, p1_odds, p2_odds,
-                p1_effective_rank=p1_eff_rank, p2_effective_rank=p2_eff_rank
+                p1_effective_rank=p1_eff_rank, p2_effective_rank=p2_eff_rank,
+                p1_rank_override=p1_rank_override, p2_rank_override=p2_rank_override
             )
             perf_elo = self.get_performance_elo_factors(
                 player1_id, player2_id, p1_odds, p2_odds,
-                p1_effective_rank=p1_eff_rank, p2_effective_rank=p2_eff_rank
+                p1_effective_rank=p1_eff_rank, p2_effective_rank=p2_eff_rank,
+                p1_rank_override=p1_rank_override, p2_rank_override=p2_rank_override
             )
 
         # Check data availability

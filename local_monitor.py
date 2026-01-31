@@ -522,6 +522,24 @@ def normalize_name(name: str) -> str:
         name = name.replace(old, new)
     return name
 
+def get_last_name(name: str) -> str:
+    """Extract the last name from a normalized name string.
+
+    Handles: 'firstname lastname' -> 'lastname'
+             'lastname f' (TE format, initial stripped) -> 'lastname'
+    """
+    parts = name.split() if name else []
+    if not parts:
+        return ''
+    # If last part is a single letter (initial), it's TE format — last name is first part
+    # For compound names like "de minaur a", we need everything before the initial
+    if len(parts) > 1 and len(parts[-1]) == 1:
+        # Return the longest non-initial part (most likely the actual surname)
+        significant = [p for p in parts if len(p) > 1]
+        return significant[-1] if significant else parts[0]
+    return parts[-1]
+
+
 def players_match(bet_p1: str, bet_p2: str, market_p1: str, market_p2: str) -> bool:
     """Check if bet players match market players (in either order)."""
     # Normalize all names
@@ -530,11 +548,11 @@ def players_match(bet_p1: str, bet_p2: str, market_p1: str, market_p2: str) -> b
     market_p1_norm = normalize_name(market_p1)
     market_p2_norm = normalize_name(market_p2)
 
-    # Get last names
-    bet_p1_last = bet_p1_norm.split()[-1] if bet_p1_norm else ''
-    bet_p2_last = bet_p2_norm.split()[-1] if bet_p2_norm else ''
-    market_p1_last = market_p1_norm.split()[-1] if market_p1_norm else ''
-    market_p2_last = market_p2_norm.split()[-1] if market_p2_norm else ''
+    # Extract last names (handles TE 'Lastname F.' format)
+    bet_p1_last = get_last_name(bet_p1_norm)
+    bet_p2_last = get_last_name(bet_p2_norm)
+    market_p1_last = get_last_name(market_p1_norm)
+    market_p2_last = get_last_name(market_p2_norm)
 
     # Try exact last name match first
     if (bet_p1_last == market_p1_last and bet_p2_last == market_p2_last) or \
@@ -543,7 +561,12 @@ def players_match(bet_p1: str, bet_p2: str, market_p1: str, market_p2: str) -> b
 
     # Try partial match (one name contains the other) for hyphenated names like "De Minaur"
     def partial_match(name1: str, name2: str) -> bool:
-        return name1 in name2 or name2 in name1 if name1 and name2 else False
+        if not name1 or not name2:
+            return False
+        # Don't match single-letter initials as substrings
+        if len(name1) <= 1 or len(name2) <= 1:
+            return False
+        return name1 in name2 or name2 in name1
 
     if (partial_match(bet_p1_last, market_p1_last) and partial_match(bet_p2_last, market_p2_last)) or \
        (partial_match(bet_p1_last, market_p2_last) and partial_match(bet_p2_last, market_p1_last)):
@@ -727,15 +750,43 @@ def find_result_for_bet(bet: Dict, results: List[Dict]) -> Optional[str]:
     return None
 
 
+def get_significant_name_parts(name: str) -> List[str]:
+    """Extract significant name parts (2+ chars) after normalization.
+
+    Handles all formats: 'Firstname Lastname', 'Lastname F.', 'F. Lastname'.
+    Strips initials so only real name parts remain.
+    """
+    normalized = normalize_name(name)
+    return [p for p in normalized.split() if len(p) > 1]
+
+
+def names_match_single(name1: str, name2: str) -> bool:
+    """Check if two names refer to the same player.
+
+    Compares significant name parts (ignoring initials) for an exact match.
+    Handles TE 'Lastname F.' format vs bet 'Firstname Lastname' format.
+    """
+    parts1 = get_significant_name_parts(name1)
+    parts2 = get_significant_name_parts(name2)
+
+    if not parts1 or not parts2:
+        return False
+
+    for p1 in parts1:
+        for p2 in parts2:
+            if p1 == p2:
+                return True
+    return False
+
+
 def settle_from_result(bet: Dict, winner_name: str) -> Optional[tuple]:
     """Determine Win/Loss by comparing bet selection to the match winner."""
     selection = bet.get('selection', '')
-    selection_last = selection.split()[-1].lower() if selection else ''
-    winner_last = winner_name.split()[-1].lower() if winner_name else ''
 
-    print(f"[{timestamp()}] TE settlement: selection='{selection}' (last='{selection_last}'), winner='{winner_name}' (last='{winner_last}')")
+    is_winner = names_match_single(selection, winner_name)
+    print(f"[{timestamp()}] TE settlement: selection='{selection}', winner='{winner_name}', match={is_winner}")
 
-    if selection_last == winner_last:
+    if is_winner:
         result = 'Win'
         profit = bet.get('stake', 0) * (bet.get('odds', 0) - 1) * 0.95
     else:
