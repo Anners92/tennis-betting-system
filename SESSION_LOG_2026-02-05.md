@@ -355,3 +355,92 @@ Lower-priority files not updated (historical/diagnostic):
 
 ---
 
+## Retroactive M2 Tagging
+
+Added Model 2 (Data Confirmed) tags to 76 historical bets where both players have serve stats from Tennis Ratio.
+
+**M2 Criteria:** Qualifies for another model + serve data exists for both players
+
+**Results:**
+- 76 bets retroactively tagged
+- Total M2 bets: 91
+
+**Model 2 Performance (settled n=74):**
+| Result | Bets | P/L |
+|--------|------|-----|
+| Win | 30 | +40.25u |
+| Loss | 41 | -31.00u |
+| Void | 3 | 0.00u |
+| **Net** | **74** | **+9.25u** |
+
+- Win rate: 40.5%
+- ROI: +12.5%
+
+The "data confirmed" signal shows positive value.
+
+---
+
+## M2 Impact Analysis by Model
+
+Analyzed how M2 (Data Confirmed) affects each model's performance:
+
+### Models That Improve Most with M2:
+
+| Model | Without M2 | With M2 | ROI Boost |
+|-------|------------|---------|-----------|
+| M4 | -64.9% ROI | +50.0% ROI | **+114.9pp** |
+| M8 | -43.2% ROI | +16.0% ROI | **+59.2pp** |
+| M3 | -69.4% ROI | -32.4% ROI | **+37.0pp** |
+| M5 | -72.1% ROI | -34.3% ROI | **+37.8pp** |
+| M7 | -29.9% ROI | +3.6% ROI | **+33.5pp** |
+
+**Key insight:** M2 improves ROI for ALL models. Even M5, which struggles overall, goes from -72.1% to -34.3% with M2 filtering.
+
+### M5+M2 Analysis:
+- M5 with M2: 10 settled, 3W-7L, -2.00u, -34.3% ROI
+- M5 without M2: 25 settled, 2W-23L, -11.31u, -72.1% ROI
+- **Conclusion:** M5 still underperforms even with M2, but significantly less catastrophically.
+
+---
+
+## M2 Filter Simulation (Feb 2-4)
+
+Analyzed what would happen if M2 (both players have serve data) was REQUIRED for all bets:
+
+| Segment | Bets | Settled | Record | P/L | ROI |
+|---------|------|---------|--------|-----|-----|
+| **ALL bets** | 75 | 58 | 23-35 | +4.38u | +11.1% |
+| **With M2 (keep)** | 51 | 35 | 16-19 | **+5.99u** | **+22.2%** |
+| **Without M2 (skip)** | 24 | 23 | 7-16 | -1.61u | -12.9% |
+
+### Daily Breakdown:
+- Feb 2: 30 bets, 10W-20L, -0.80u (-3.5% ROI)
+- Feb 3: 25 bets, 12W-12L, +6.21u (+41.4% ROI)
+- Feb 4: 20 bets, 1W-3L, -1.03u (only 4 settled)
+
+### Impact:
+- **+7.60u difference** between M2 and non-M2 bets
+- Win rate: 45.7% with M2 vs 30.4% without M2
+- ROI: +22.2% with M2 vs -12.9% without M2
+
+### Recommendation:
+M2 still shows value as a filter. Bets with serve data for both players perform significantly better across ROI and win rate.
+
+---
+
+## Bug Fix: M12 Fade Bets Not Being Created
+
+**Issue:** M12 (2-0 fade) bets were not being created for Pure M3 bets like Aboian.
+
+**Root Cause:** In `bet_suggester.py` line 791-794, when `replaces_original: False` (config setting to add M12 alongside original bet), the code only had a comment `# Create M12 bet too...` but no actual implementation.
+
+**Fix:** Added the complete M12 bet creation code in the `else` block to create and append the fade bet alongside the original bet.
+
+**Files changed:**
+- `src/bet_suggester.py` (lines 791-810)
+- Synced to `dist/TennisBettingSystem/bet_suggester.py`
+
+**Impact:** M12 fade bets will now be properly created for Pure M3 and M5 bets when opponent odds are 1.20-1.50.
+
+---
+

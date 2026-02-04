@@ -10,7 +10,8 @@ from typing import Dict, List, Optional
 import json
 
 from config import (UI_COLORS, SURFACES, BETTING_SETTINGS, KELLY_STAKING, DB_PATH,
-                     get_tour_level, calculate_bet_model)
+                     get_tour_level, calculate_bet_model, MODEL5_SETTINGS,
+                     MODEL12_SETTINGS, check_m12_fade)
 from database import db, TennisDatabase
 from match_analyzer import MatchAnalyzer
 from name_matcher import name_matcher
@@ -134,7 +135,7 @@ METRIC_TOOLTIPS = {
     "Surface": "Historical win rate on this surface type. Combines career stats with recent performance. Some players excel on specific surfaces.",
     "Head-to-Head": "Direct match record between these players. Recent H2H results weighted more heavily than older matches.",
     "Fatigue": "Rest and workload assessment. Factors in days since last match, matches in last 14/30 days, and match difficulty (duration, sets).",
-    "Injury": "Current injury status. Players returning from injury or with minor concerns may underperform.",
+    "Activity": "Player activity level based on recent match frequency. Returning/inactive players have unreliable rankings.",
     "Opp Quality": "Quality of recent opponents. Wins vs top players worth more, losses to low-ranked players penalized. Weighted by recency.",
     "Recency": "How recent the form data is. Matches in last 7 days weighted 100%, 7-30 days 70%, 30-90 days 40%, older 20%.",
     "Recent Loss": "Penalty for coming off a recent loss. Loss in last 3 days = -0.10, last 7 days = -0.05. 5-set losses add extra penalty.",
@@ -622,6 +623,14 @@ class BetSuggester:
         self.db = database or db
         self.analyzer = MatchAnalyzer(self.db)
 
+    def _get_min_player_matches(self, match):
+        """Get minimum match count between both players (for M5 data quality check)."""
+        p1_id = match.get('player1_id')
+        p2_id = match.get('player2_id')
+        p1_count = db.get_player_match_count(p1_id) if p1_id else 0
+        p2_count = db.get_player_match_count(p2_id) if p2_id else 0
+        return min(p1_count, p2_count)
+
     def analyze_upcoming_match(self, match: Dict) -> Dict:
         """
         Analyze an upcoming match and determine value opportunities.
@@ -635,19 +644,25 @@ class BetSuggester:
         p2_odds = match.get('player2_odds')
 
         # Skip match if either player has odds below minimum (liquidity filter)
-        min_opponent_odds = KELLY_STAKING.get("min_opponent_odds", 1.20)
-        if (p1_odds and p1_odds < min_opponent_odds) or (p2_odds and p2_odds < min_opponent_odds):
-            return {
-                'match': match,
-                'analysis': {},
-                'p1_probability': 0.5,
-                'p2_probability': 0.5,
-                'confidence': 0,
-                'value_bets': [],
-                'p1_value': None,
-                'p2_value': None,
-                'skipped': 'low_opponent_odds',
-            }
+        # Exception: keep match if the other side has odds in M5 underdog range (>= 3.00)
+        min_opponent_odds = KELLY_STAKING.get("min_opponent_odds", 1.10)
+        m5_min_odds = MODEL5_SETTINGS.get("min_odds", 3.00) if MODEL5_SETTINGS.get("enabled") else 999
+        p1_below = p1_odds and p1_odds < min_opponent_odds
+        p2_below = p2_odds and p2_odds < min_opponent_odds
+        if p1_below or p2_below:
+            has_underdog = (p1_below and p2_odds and p2_odds >= m5_min_odds) or (p2_below and p1_odds and p1_odds >= m5_min_odds)
+            if not has_underdog:
+                return {
+                    'match': match,
+                    'analysis': {},
+                    'p1_probability': 0.5,
+                    'p2_probability': 0.5,
+                    'confidence': 0,
+                    'value_bets': [],
+                    'p1_value': None,
+                    'p2_value': None,
+                    'skipped': 'low_opponent_odds',
+                }
 
         # Get probability analysis (pass odds for WTA/unranked player estimation)
         analysis = self.analyzer.calculate_win_probability(
@@ -666,17 +681,27 @@ class BetSuggester:
             'p2_value': None,
         }
 
+        # Extract serve data and activity data for edge modifiers
+        serve_data = analysis.get('serve_data')
+        activity_data = analysis.get('activity_data')
+
         # Check for value on P1
         if p1_odds:
             p1_value = self.analyzer.find_value(
                 analysis['p1_probability'], p1_odds,
                 player_name=match.get('player1_name', 'Player 1'),
                 tournament=match.get('tournament'),
-                surface=match.get('surface')
+                surface=match.get('surface'),
+                serve_data=serve_data, side='p1',
+                activity_data=activity_data,
+                weighted_advantage=analysis.get('weighted_advantage')
             )
             p1_value['player'] = match.get('player1_name', 'Player 1')
             p1_value['odds'] = p1_odds
             p1_value['selection'] = 'player1'
+            # Add surface score for M11 detection (positive = favors P1)
+            surface_factor = analysis.get('factors', {}).get('surface', {})
+            p1_value['surface_score_for_pick'] = surface_factor.get('advantage', 0)
             result['p1_value'] = p1_value  # Always store
             if p1_value['is_value']:
                 result['value_bets'].append(p1_value)
@@ -687,11 +712,17 @@ class BetSuggester:
                 analysis['p2_probability'], p2_odds,
                 player_name=match.get('player2_name', 'Player 2'),
                 tournament=match.get('tournament'),
-                surface=match.get('surface')
+                surface=match.get('surface'),
+                serve_data=serve_data, side='p2',
+                activity_data=activity_data,
+                weighted_advantage=analysis.get('weighted_advantage')
             )
             p2_value['player'] = match.get('player2_name', 'Player 2')
             p2_value['odds'] = p2_odds
             p2_value['selection'] = 'player2'
+            # Add surface score for M11 detection (negate since P2 bet)
+            surface_factor = analysis.get('factors', {}).get('surface', {})
+            p2_value['surface_score_for_pick'] = -surface_factor.get('advantage', 0)
             result['p2_value'] = p2_value  # Always store
             if p2_value['is_value']:
                 result['value_bets'].append(p2_value)
@@ -699,6 +730,90 @@ class BetSuggester:
         # Set betting analysis
         set_probs = self.analyzer.calculate_set_probabilities(analysis['p1_probability'])
         result['set_probabilities'] = set_probs
+
+        # ====================================================================
+        # M12 (2-0 FADE) CHECK
+        # If a value bet qualifies for Pure M3 or M5, and the opponent is a
+        # heavy favourite (1.20-1.50), replace the bet with a 2-0 fade bet.
+        # ====================================================================
+        if MODEL12_SETTINGS.get("enabled", True) and result['value_bets']:
+            transformed_bets = []
+            for bet in result['value_bets']:
+                # Calculate model for this bet
+                models_str = calculate_bet_model(
+                    bet.get('our_probability', 0.5),
+                    bet.get('implied_probability', 0.5),
+                    match.get('tournament', ''),
+                    bet.get('odds'),
+                    None,
+                    serve_alignment=bet.get('serve_alignment'),
+                    min_player_matches=self._get_min_player_matches(match),
+                    activity_driven_edge=bet.get('activity_driven_edge', False),
+                    activity_min_score=bet.get('activity_min_score'),
+                    surface_score_for_pick=bet.get('surface_score_for_pick')
+                )
+
+                # Determine opponent info
+                if bet.get('selection') == 'player1':
+                    opponent_name = match.get('player2_name', 'Player 2')
+                    opponent_match_odds = p2_odds
+                    opponent_2_0_odds = match.get('p2_2_0_odds')
+                else:
+                    opponent_name = match.get('player1_name', 'Player 1')
+                    opponent_match_odds = p1_odds
+                    opponent_2_0_odds = match.get('p1_2_0_odds')
+
+                # Check M12 trigger
+                m12_check = check_m12_fade(models_str, opponent_match_odds, opponent_2_0_odds)
+
+                if m12_check['triggers']:
+                    if MODEL12_SETTINGS.get("replaces_original", True):
+                        # Create transformed M12 bet
+                        m12_bet = bet.copy()
+                        m12_bet['player'] = opponent_name
+                        m12_bet['odds'] = m12_check['odds']  # 2-0 odds
+                        m12_bet['selection'] = 'player2' if bet.get('selection') == 'player1' else 'player1'
+                        m12_bet['market_type'] = 'Set Handicap'
+                        m12_bet['bet_type'] = '2-0'
+                        m12_bet['is_m12_fade'] = True
+                        m12_bet['m12_reason'] = m12_check['reason']
+                        m12_bet['original_trigger'] = m12_check.get('original_trigger', '')
+                        m12_bet['original_pick'] = bet.get('player')
+                        m12_bet['original_odds'] = bet.get('odds')
+                        m12_bet['original_models'] = models_str
+                        # Recalculate implied prob and edge for the 2-0 market
+                        m12_bet['implied_probability'] = 1 / m12_check['odds'] if m12_check['odds'] else 0
+                        # Use estimated 71% win rate for favourite 2-0 when opp odds 1.20-1.50
+                        m12_bet['our_probability'] = 0.71
+                        m12_bet['edge'] = m12_bet['our_probability'] - m12_bet['implied_probability']
+                        m12_bet['expected_value'] = m12_bet['edge'] * m12_check['odds']
+                        transformed_bets.append(m12_bet)
+                    else:
+                        # Add M12 alongside original - keep the original bet
+                        transformed_bets.append(bet)
+                        # Create M12 fade bet too
+                        m12_bet = bet.copy()
+                        m12_bet['player'] = opponent_name
+                        m12_bet['odds'] = m12_check['odds']  # 2-0 odds
+                        m12_bet['selection'] = 'player2' if bet.get('selection') == 'player1' else 'player1'
+                        m12_bet['market_type'] = 'Set Handicap'
+                        m12_bet['bet_type'] = '2-0'
+                        m12_bet['is_m12_fade'] = True
+                        m12_bet['m12_reason'] = m12_check['reason']
+                        m12_bet['original_trigger'] = m12_check.get('original_trigger', '')
+                        m12_bet['original_pick'] = bet.get('player')
+                        m12_bet['original_odds'] = bet.get('odds')
+                        m12_bet['original_models'] = models_str
+                        m12_bet['implied_probability'] = 1 / m12_check['odds'] if m12_check['odds'] else 0
+                        m12_bet['our_probability'] = 0.71
+                        m12_bet['edge'] = m12_bet['our_probability'] - m12_bet['implied_probability']
+                        m12_bet['expected_value'] = m12_bet['edge'] * m12_check['odds']
+                        transformed_bets.append(m12_bet)
+                else:
+                    # No M12, keep original bet
+                    transformed_bets.append(bet)
+
+            result['value_bets'] = transformed_bets
 
         return result
 
@@ -741,11 +856,21 @@ class BetSuggester:
                     p2_id = mapped_id
                     match['player2_id'] = mapped_id
 
+            # Skip auto-created players (negative IDs = no real data, unreliable model output)
+            if (p1_id and p1_id < 0) or (p2_id and p2_id < 0):
+                continue
+
             # Now check if we have both player IDs
             if p1_id and p2_id:
                 try:
                     analysis = self.analyze_upcoming_match(match)
                     results.append(analysis)
+                    # Log every analysed match (bets and non-bets)
+                    if not analysis.get('skipped'):
+                        try:
+                            self._log_match_analysis(analysis)
+                        except Exception:
+                            pass  # Don't break analysis flow
                 except Exception as e:
                     print(f"Error analyzing match: {e}")
 
@@ -755,6 +880,128 @@ class BetSuggester:
         ), reverse=True)
 
         return results
+
+    def _log_match_analysis(self, result: Dict):
+        """Log a full match analysis to the match_analyses table."""
+        match = result['match']
+        analysis = result.get('analysis', {})
+        factors = analysis.get('factors', {})
+
+        # Extract factor advantages (-1 to +1, positive = favours P1)
+        factor_data = {}
+        for factor_name in ['form', 'surface', 'ranking', 'h2h', 'fatigue',
+                            'recent_loss', 'momentum', 'performance_elo']:
+            f = factors.get(factor_name, {})
+            factor_data[f'factor_{factor_name}'] = f.get('advantage')
+
+        # Extract ranking/elo from ranking factor data
+        ranking_data = factors.get('ranking', {}).get('data', {})
+
+        # Determine best value side
+        p1_val = result.get('p1_value') or {}
+        p2_val = result.get('p2_value') or {}
+        p1_edge = p1_val.get('edge', 0) or 0
+        p2_edge = p2_val.get('edge', 0) or 0
+
+        if p1_edge >= p2_edge and p1_edge > 0:
+            best_edge = p1_edge
+            best_ev = p1_val.get('expected_value', 0)
+            best_side = 'p1'
+        elif p2_edge > 0:
+            best_edge = p2_edge
+            best_ev = p2_val.get('expected_value', 0)
+            best_side = 'p2'
+        else:
+            best_edge = None
+            best_ev = None
+            best_side = None
+
+        # Determine which models qualify for each side
+        models = []
+        for side, val in [('p1', p1_val), ('p2', p2_val)]:
+            if val and val.get('is_value'):
+                model = calculate_bet_model(
+                    val.get('our_probability', 0.5),
+                    val.get('implied_probability', 0.5),
+                    match.get('tournament', ''),
+                    val.get('odds'),
+                    None,
+                    serve_alignment=val.get('serve_alignment'),
+                    min_player_matches=self._get_min_player_matches(match),
+                    activity_driven_edge=val.get('activity_driven_edge', False),
+                    activity_min_score=val.get('activity_min_score'),
+                    surface_score_for_pick=None  # Not available at filter stage
+                )
+                if model and model != "None":
+                    models.append(f"{side}:{model}")
+        models_qualified = ','.join(models) if models else None
+
+        data = {
+            'match_date': match.get('date', '').split(' ')[0] if match.get('date') else None,
+            'tournament': match.get('tournament'),
+            'surface': match.get('surface'),
+            'player1_name': match.get('player1_name'),
+            'player2_name': match.get('player2_name'),
+            'player1_id': match.get('player1_id'),
+            'player2_id': match.get('player2_id'),
+            'p1_odds': match.get('player1_odds'),
+            'p2_odds': match.get('player2_odds'),
+            'p1_probability': result.get('p1_probability'),
+            'p2_probability': result.get('p2_probability'),
+            'confidence': result.get('confidence'),
+            'weighted_advantage': analysis.get('weighted_advantage'),
+            'p1_rank': ranking_data.get('p1_rank'),
+            'p2_rank': ranking_data.get('p2_rank'),
+            'p1_elo': ranking_data.get('p1_elo'),
+            'p2_elo': ranking_data.get('p2_elo'),
+            'best_edge': best_edge,
+            'best_ev': best_ev,
+            'best_side': best_side,
+            'models_qualified': models_qualified,
+        }
+        data.update(factor_data)
+
+        # Look up serve stats for both players
+        p1_serve = self.db.get_player_serve_stats(match.get('player1_id'))
+        p2_serve = self.db.get_player_serve_stats(match.get('player2_id'))
+
+        serve_map = {
+            'first_serve_pct': 'serve_1st_pct',
+            'first_serve_won_pct': 'serve_1st_won',
+            'second_serve_won_pct': 'serve_2nd_won',
+            'aces_per_match': 'aces_pm',
+            'dfs_per_match': 'dfs_pm',
+            'service_games_won_pct': 'svc_games_won',
+            'return_1st_won_pct': 'return_1st_won',
+            'return_2nd_won_pct': 'return_2nd_won',
+            'bp_saved_pct': 'bp_saved',
+            'bp_converted_pct': 'bp_converted',
+            'return_games_won_pct': 'return_games_won',
+        }
+        for src_key, col_suffix in serve_map.items():
+            data[f'p1_{col_suffix}'] = p1_serve.get(src_key) if p1_serve else None
+            data[f'p2_{col_suffix}'] = p2_serve.get(src_key) if p2_serve else None
+
+        # Extract dominance ratio and serve edge modifier data
+        serve_data = result.get('analysis', {}).get('serve_data', {})
+        data['p1_dominance_ratio'] = serve_data.get('p1_dr')
+        data['p2_dominance_ratio'] = serve_data.get('p2_dr')
+
+        # Get serve modifier from the best-value side
+        best_val = p1_val if best_side == 'p1' else p2_val if best_side == 'p2' else {}
+        data['serve_dr_gap'] = best_val.get('serve_dr_gap')
+        data['serve_alignment'] = best_val.get('serve_alignment')
+        data['serve_modifier'] = best_val.get('serve_modifier')
+
+        # Activity data
+        activity_data = result.get('analysis', {}).get('activity_data', {})
+        p1_act = activity_data.get('p1', {})
+        p2_act = activity_data.get('p2', {})
+        data['p1_activity_score'] = p1_act.get('score')
+        data['p2_activity_score'] = p2_act.get('score')
+        data['activity_modifier'] = best_val.get('activity_modifier')
+
+        self.db.log_match_analysis(data)
 
     def get_top_value_bets(self, min_ev: float = None, min_stake: float = 0.5) -> List[Dict]:
         """
@@ -772,14 +1019,23 @@ class BetSuggester:
                     continue
 
                 if bet['expected_value'] >= min_ev:
-                    # Check if bet qualifies for any model
-                    model = calculate_bet_model(
-                        bet.get('our_probability', 0.5),
-                        bet.get('implied_probability', 0.5),
-                        result['match'].get('tournament', ''),
-                        bet.get('odds'),
-                        None
-                    )
+                    # Check if this is an M12 fade bet (already transformed)
+                    if bet.get('is_m12_fade'):
+                        model = f"Model 12 ({bet.get('original_trigger', 'fade')})"
+                    else:
+                        # Check if bet qualifies for any model
+                        model = calculate_bet_model(
+                            bet.get('our_probability', 0.5),
+                            bet.get('implied_probability', 0.5),
+                            result['match'].get('tournament', ''),
+                            bet.get('odds'),
+                            None,
+                            serve_alignment=bet.get('serve_alignment'),
+                            min_player_matches=self._get_min_player_matches(result['match']),
+                            activity_driven_edge=bet.get('activity_driven_edge', False),
+                            activity_min_score=bet.get('activity_min_score'),
+                            surface_score_for_pick=None  # Not available at filter stage
+                        )
                     if model == "None" or not model:
                         continue  # Skip bets that don't qualify for any model
 
@@ -811,7 +1067,7 @@ class BetSuggester:
 class BetSuggesterUI:
     """Tkinter UI for Bet Suggester."""
 
-    def __init__(self, parent: tk.Tk = None):
+    def __init__(self, parent: tk.Tk = None, on_change_callback=None):
         if parent:
             self.root = tk.Toplevel(parent)
         else:
@@ -821,6 +1077,7 @@ class BetSuggesterUI:
         self.root.configure(bg=UI_COLORS["bg_dark"])
         self.root.state('zoomed')  # Launch maximized
 
+        self.on_change_callback = on_change_callback
         self.suggester = BetSuggester()
         self.players_cache = []
         self.scraper = TennisAbstractScraper() if SCRAPER_AVAILABLE else None
@@ -936,7 +1193,7 @@ class BetSuggesterUI:
         # Filter settings (stored as instance variables)
         self.filter_settings = {
             'min_ev': 5,
-            'max_ev': 100,
+            'max_ev': 500,
             'min_units': 0.5,
         }
 
@@ -1053,7 +1310,7 @@ class BetSuggesterUI:
         table_frame = ttk.Frame(right_frame, style="Dark.TFrame")
         table_frame.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("tour", "time", "match", "selection", "odds", "our_prob", "ev", "units", "conf", "models")
+        columns = ("tour", "time", "match", "selection", "type", "odds", "our_prob", "ev", "units", "conf", "serve", "models")
         self.value_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
 
         # Configure columns with sorting
@@ -1062,11 +1319,13 @@ class BetSuggesterUI:
             ("time", "Time", 70),
             ("match", "Match", 140),
             ("selection", "Selection", 100),
+            ("type", "Type", 45),
             ("odds", "Odds", 50),
             ("our_prob", "Our %", 50),
             ("ev", "EV", 50),
             ("units", "Units", 45),
             ("conf", "Conf", 40),
+            ("serve", "Srv", 40),
             ("models", "Models", 70),
         ]
 
@@ -1153,6 +1412,20 @@ class BetSuggesterUI:
             total_matched = match.get('total_matched') or 0
             if total_matched < MIN_MATCHED_LIQUIDITY:
                 continue
+
+            # Skip matches where either player's odds are below minimum opponent odds
+            # Exception: keep match if the other side has odds in M5 underdog range (>= 3.00)
+            p1_odds_val = match.get('player1_odds') or 0
+            p2_odds_val = match.get('player2_odds') or 0
+            min_opponent_odds = KELLY_STAKING.get("min_opponent_odds", 1.10)
+            m5_min_odds = MODEL5_SETTINGS.get("min_odds", 3.00) if MODEL5_SETTINGS.get("enabled") else 999
+            p1_below = p1_odds_val > 0 and p1_odds_val < min_opponent_odds
+            p2_below = p2_odds_val > 0 and p2_odds_val < min_opponent_odds
+            if p1_below or p2_below:
+                # Allow if the other side qualifies as a potential underdog bet
+                has_underdog = (p1_below and p2_odds_val >= m5_min_odds) or (p2_below and p1_odds_val >= m5_min_odds)
+                if not has_underdog:
+                    continue
 
             # Try name_matcher to find correct player IDs if current ones have no history
             # BUT only replace if the original player ID doesn't exist in the database
@@ -1302,12 +1575,12 @@ class BetSuggesterUI:
         try:
             if self.matches_tree.exists(item_id):
                 values = list(self.matches_tree.item(item_id, 'values'))
-                values[7] = our_p1_odds   # our_p1 column
-                values[8] = p1_ev         # p1_ev column
-                values[10] = our_p2_odds  # our_p2 column
-                values[11] = p2_ev        # p2_ev column
+                values[8] = our_p1_odds   # our_p1 column
+                values[9] = p1_ev         # p1_ev column
+                values[11] = our_p2_odds  # our_p2 column
+                values[12] = p2_ev        # p2_ev column
                 if status:
-                    values[12] = status   # status column
+                    values[13] = status   # status column
                 self.matches_tree.item(item_id, values=values)
         except tk.TclError:
             pass  # Widget may have been destroyed
@@ -1370,18 +1643,38 @@ class BetSuggesterUI:
         dialog.configure(bg=UI_COLORS["bg_dark"])
         dialog.transient(self.root)
 
-        # Get screen dimensions and size dialog to fit comfortably
-        screen_width = dialog.winfo_screenwidth()
-        screen_height = dialog.winfo_screenheight()
-        dialog_width = int(screen_width * 0.90)
-        dialog_height = int(screen_height * 0.82)
-        x_pos = (screen_width - dialog_width) // 2
-        y_pos = (screen_height - dialog_height) // 2 - 30
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_pos}+{y_pos}")
+        # Maximise the dialog window
+        dialog.state('zoomed')
 
-        # Main frame - no scrolling, direct pack
-        main_frame = ttk.Frame(dialog, style="Dark.TFrame", padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # Scrollable main frame
+        outer_frame = ttk.Frame(dialog, style="Dark.TFrame")
+        outer_frame.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(outer_frame, bg=UI_COLORS["bg_dark"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(outer_frame, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        main_frame = ttk.Frame(canvas, style="Dark.TFrame", padding=10)
+        canvas_window = canvas.create_window((0, 0), window=main_frame, anchor="nw")
+
+        def _on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        main_frame.bind("<Configure>", _on_frame_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        dialog.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>") if e.widget == dialog else None)
 
         # Header row: Tournament + Date + TE Import button
         header_frame = ttk.Frame(main_frame, style="Dark.TFrame")
@@ -1487,8 +1780,12 @@ class BetSuggesterUI:
             p2_tier = ""
             if p1_odds and p2_odds:
                 # log=False since main analysis already logged this
-                p1_value = analyzer.find_value(result['p1_probability'], float(p1_odds), log=False)
-                p2_value = analyzer.find_value(result['p2_probability'], float(p2_odds), log=False)
+                serve_data_raw = result.get('serve_data') or result.get('factors', {}).get('serve', {}).get('data')
+                activity_data_raw = result.get('activity_data')
+                p1_value = analyzer.find_value(result['p1_probability'], float(p1_odds), log=False,
+                                                serve_data=serve_data_raw, side='p1', activity_data=activity_data_raw)
+                p2_value = analyzer.find_value(result['p2_probability'], float(p2_odds), log=False,
+                                                serve_data=serve_data_raw, side='p2', activity_data=activity_data_raw)
                 p1_ev = p1_value['expected_value']
                 p2_ev = p2_value['expected_value']
                 p1_units = p1_value.get('recommended_units', 0)
@@ -1513,7 +1810,7 @@ class BetSuggesterUI:
                              bg=UI_COLORS["bg_dark"], padx=10, pady=3,
                              anchor="w").pack(fill=tk.X)
 
-            # === TOP ROW: Probabilities + Bet Buttons (compact) ===
+            # === TOP ROW: Probabilities + Bet Buttons ===
             top_frame = ttk.Frame(main_frame, style="Card.TFrame", padding=8)
             top_frame.pack(fill=tk.X, pady=5)
 
@@ -1538,7 +1835,6 @@ class BetSuggesterUI:
             if p1_has_value:
                 tier_labels = {"standard": "Standard", "confident": "Confident", "strong": "Strong"}
                 tier_label = tier_labels.get(p1_tier, "")
-                # Format units nicely (1, 1.5, 2, etc.)
                 p1_units_str = f"{p1_units:.1f}".rstrip('0').rstrip('.') if p1_units % 1 else f"{int(p1_units)}"
                 value_badge = tk.Label(p1_section, text=f"★ VALUE BET  {p1_units_str}U ({tier_label})",
                     font=("Segoe UI", 10, "bold"), fg="white", bg=UI_COLORS["success"],
@@ -1579,7 +1875,6 @@ class BetSuggesterUI:
             if p2_has_value:
                 tier_labels = {"standard": "Standard", "confident": "Confident", "strong": "Strong"}
                 tier_label = tier_labels.get(p2_tier, "")
-                # Format units nicely (1, 1.5, 2, etc.)
                 p2_units_str = f"{p2_units:.1f}".rstrip('0').rstrip('.') if p2_units % 1 else f"{int(p2_units)}"
                 value_badge = tk.Label(p2_section, text=f"★ VALUE BET  {p2_units_str}U ({tier_label})",
                     font=("Segoe UI", 10, "bold"), fg="white", bg=UI_COLORS["success"],
@@ -1625,14 +1920,23 @@ class BetSuggesterUI:
             p2_matches = db.get_player_matches(p2_id, limit=10) if p2_id else []
             self._create_matches_list(p2_matches_frame, p2_matches, p2_id)
 
-            # === BOTTOM ROW: Value Analysis (left) + Analysis Summary (right) ===
-            if p1_odds and p2_odds:
-                bottom_frame = ttk.Frame(main_frame, style="Dark.TFrame")
-                bottom_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+            # === BOTTOM ROW: Value Analysis (left) + Serve Stats (center) + Analysis Summary (right) ===
+            bottom_frame = ttk.Frame(main_frame, style="Dark.TFrame")
+            bottom_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
-                # Use grid for equal height columns
+            # Compute serve alignment for display
+            serve_data_raw = result.get('serve_data') or result.get('factors', {}).get('serve', {}).get('data')
+            if serve_data_raw and serve_data_raw.get('has_data'):
+                serve_align_p1 = analyzer._calculate_serve_edge_modifier(serve_data_raw, 'p1')
+                serve_align_p2 = analyzer._calculate_serve_edge_modifier(serve_data_raw, 'p2')
+            else:
+                serve_align_p1 = serve_align_p2 = None
+
+            if p1_odds and p2_odds:
+                # 3-column layout: Value | Serve Stats | Summary
                 bottom_frame.columnconfigure(0, weight=1)
                 bottom_frame.columnconfigure(1, weight=1)
+                bottom_frame.columnconfigure(2, weight=1)
                 bottom_frame.rowconfigure(0, weight=1)
 
                 # Value Analysis on the left
@@ -1641,10 +1945,25 @@ class BetSuggesterUI:
                 self._create_value_content(value_frame, result, p1_name, p2_name,
                                            float(p1_odds), float(p2_odds), analyzer)
 
+                # Serve Stats in the center
+                serve_frame = ttk.Frame(bottom_frame, style="Card.TFrame", padding=10)
+                serve_frame.grid(row=0, column=1, sticky="nsew", padx=5)
+                self._create_serve_stats_content(serve_frame, p1_id, p2_id, p1_name, p2_name,
+                                                  serve_align_p1, serve_align_p2)
+
                 # Analysis Summary on the right
                 summary_frame = ttk.Frame(bottom_frame, style="Card.TFrame", padding=10)
-                summary_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+                summary_frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
                 self._create_analysis_summary_detailed(summary_frame, result, p1_name, p2_name, p1_odds, p2_odds)
+            else:
+                # No odds — just show serve stats
+                bottom_frame.columnconfigure(0, weight=1)
+                bottom_frame.rowconfigure(0, weight=1)
+
+                serve_frame = ttk.Frame(bottom_frame, style="Card.TFrame", padding=10)
+                serve_frame.grid(row=0, column=0, sticky="nsew")
+                self._create_serve_stats_content(serve_frame, p1_id, p2_id, p1_name, p2_name,
+                                                  serve_align_p1, serve_align_p2)
 
         except Exception as e:
             import traceback
@@ -1662,7 +1981,7 @@ class BetSuggesterUI:
                   font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 3))
 
         factors = result.get('factors', {})
-        factor_order = ['ranking', 'form', 'surface', 'h2h', 'fatigue', 'injury',
+        factor_order = ['ranking', 'form', 'surface', 'h2h', 'fatigue',
                         'recent_loss', 'momentum', 'performance_elo']
 
         # Header row
@@ -1728,7 +2047,7 @@ class BetSuggesterUI:
             elif factor_key == 'h2h':
                 data = factor_data.get('data', {})
                 return f"{data.get(f'{player}_wins', 0)}W"
-            elif factor_key in ['fatigue', 'injury']:
+            elif factor_key == 'fatigue':
                 p_data = factor_data.get(player, {})
                 return p_data.get('status', 'OK')[:7]
             elif factor_key == 'opponent_quality':
@@ -1842,8 +2161,12 @@ class BetSuggesterUI:
         ttk.Label(parent, text="Value Analysis", style="Card.TLabel",
                   font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 3))
 
-        p1_value = analyzer.find_value(result['p1_probability'], p1_odds, log=False)
-        p2_value = analyzer.find_value(result['p2_probability'], p2_odds, log=False)
+        serve_data_raw = result.get('serve_data') or result.get('factors', {}).get('serve', {}).get('data')
+        activity_data_raw = result.get('activity_data')
+        p1_value = analyzer.find_value(result['p1_probability'], p1_odds, log=False,
+                                        serve_data=serve_data_raw, side='p1', activity_data=activity_data_raw)
+        p2_value = analyzer.find_value(result['p2_probability'], p2_odds, log=False,
+                                        serve_data=serve_data_raw, side='p2', activity_data=activity_data_raw)
 
         p1_implied = (1 / p1_odds) * 100
         p2_implied = (1 / p2_odds) * 100
@@ -2745,23 +3068,23 @@ class BetSuggesterUI:
         tk.Label(adv_frame, text=f"{abs(advantage):.3f} favoring {favors}",
                  font=("Segoe UI", 11, "bold"), fg=adv_color, bg=UI_COLORS["bg_medium"]).pack(anchor=tk.W, pady=(5, 0))
 
-    def _show_injury_details(self, injury_data: Dict, p1_name: str, p2_name: str):
-        """Show detailed injury breakdown in a popup."""
-        p1 = injury_data.get('p1', {})
-        p2 = injury_data.get('p2', {})
+    def _show_activity_details(self, activity_data: Dict, p1_name: str, p2_name: str):
+        """Show detailed activity breakdown in a popup."""
+        p1 = activity_data.get('p1', {})
+        p2 = activity_data.get('p2', {})
 
         popup = tk.Toplevel(self.root)
-        popup.title("Injury Breakdown")
-        popup.geometry("500x350")
+        popup.title("Activity Breakdown")
+        popup.geometry("550x400")
         popup.configure(bg=UI_COLORS["bg_dark"])
         popup.transient(self.root)
 
         content = ttk.Frame(popup, style="Card.TFrame", padding=20)
         content.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        ttk.Label(content, text="Injury Breakdown", style="Dark.TLabel",
+        ttk.Label(content, text="Activity Breakdown", style="Dark.TLabel",
                   font=("Segoe UI", 14, "bold")).pack(anchor=tk.W)
-        ttk.Label(content, text="Known injury status for each player",
+        ttk.Label(content, text="Recent match frequency — edge modifier, not a weighted factor",
                   style="Card.TLabel", foreground=UI_COLORS["text_secondary"]).pack(anchor=tk.W, pady=(0, 15))
 
         # Main comparison table
@@ -2777,31 +3100,46 @@ class BetSuggesterUI:
         p2_status = p2.get('status', 'Active')
         p1_score = p1.get('score', 100)
         p2_score = p2.get('score', 100)
+        p1_matches = p1.get('match_count_90d', 'N/A')
+        p2_matches = p2.get('match_count_90d', 'N/A')
+        p1_gap = p1.get('max_gap_days', 'N/A')
+        p2_gap = p2.get('max_gap_days', 'N/A')
 
         rows = [
             ("Status", p1_status, p2_status),
-            ("Health Score", f"{p1_score:.0f} / 100", f"{p2_score:.0f} / 100"),
+            ("Activity Score", f"{p1_score:.0f} / 100", f"{p2_score:.0f} / 100"),
+            ("Matches (90d)", str(p1_matches), str(p2_matches)),
+            ("Max Gap (days)", str(p1_gap), str(p2_gap)),
         ]
 
         for row_idx, (label, v1, v2) in enumerate(rows, 1):
             ttk.Label(table, text=label, style="Card.TLabel").grid(row=row_idx, column=0, padx=10, pady=3, sticky=tk.W)
 
-            # Color code status
-            v1_color = UI_COLORS["success"] if "Active" in v1 or v1 == "100 / 100" else UI_COLORS["danger"]
-            v2_color = UI_COLORS["success"] if "Active" in v2 or v2 == "100 / 100" else UI_COLORS["danger"]
+            # Color code by activity level
+            def _act_color(score_str):
+                try:
+                    s = float(score_str.split('/')[0].strip())
+                    if s >= 70: return UI_COLORS["success"]
+                    elif s >= 40: return UI_COLORS["warning"]
+                    else: return UI_COLORS["danger"]
+                except:
+                    return UI_COLORS["text_secondary"]
+
+            v1_color = _act_color(str(p1_score)) if row_idx <= 2 else UI_COLORS["text_secondary"]
+            v2_color = _act_color(str(p2_score)) if row_idx <= 2 else UI_COLORS["text_secondary"]
 
             tk.Label(table, text=v1, font=("Segoe UI", 9), fg=v1_color, bg=UI_COLORS["bg_medium"]).grid(row=row_idx, column=1, padx=10, pady=3, sticky=tk.W)
             tk.Label(table, text=v2, font=("Segoe UI", 9), fg=v2_color, bg=UI_COLORS["bg_medium"]).grid(row=row_idx, column=2, padx=10, pady=3, sticky=tk.W)
 
-        # Data limitation notice
+        # Explanation notice
         notice_frame = ttk.Frame(content, style="Card.TFrame")
         notice_frame.pack(fill=tk.X, pady=(20, 10))
 
-        ttk.Label(notice_frame, text="Data Limitation Notice:", style="Card.TLabel",
+        ttk.Label(notice_frame, text="How it works:", style="Card.TLabel",
                   font=("Segoe UI", 10, "bold"), foreground=UI_COLORS["warning"]).pack(anchor=tk.W)
-        ttk.Label(notice_frame, text="Injury data is limited and manually maintained.",
+        ttk.Label(notice_frame, text="When either player has low activity, ranking/Elo signals are unreliable.",
                   style="Card.TLabel", foreground=UI_COLORS["text_secondary"]).pack(anchor=tk.W, pady=(5, 0))
-        ttk.Label(notice_frame, text="Always check recent news for injury updates before betting.",
+        ttk.Label(notice_frame, text="Edge is reduced up to 40% and stake up to 30% based on min activity score.",
                   style="Card.TLabel", foreground=UI_COLORS["text_secondary"]).pack(anchor=tk.W)
 
     def _show_opponent_quality_details(self, opp_data: Dict, p1_name: str, p2_name: str):
@@ -3140,14 +3478,14 @@ class BetSuggesterUI:
                           style="Card.TLabel", foreground=UI_COLORS["warning"]).pack(anchor=tk.W)
 
     def _create_analysis_table(self, parent, result: Dict, p1_name: str, p2_name: str, p1_id: int = None, p2_id: int = None, surface: str = None, pack_side=None):
-        """Create the detailed analysis breakdown table with 8 active factors."""
+        """Create the detailed analysis breakdown table with 9 factors."""
         table_frame = ttk.Frame(parent, style="Card.TFrame", padding=10)
         if pack_side:
             table_frame.pack(side=pack_side, fill=tk.Y, pady=5)
         else:
             table_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(table_frame, text="Factor Analysis (8 Factors)", style="Card.TLabel",
+        ttk.Label(table_frame, text="Factor Analysis (9 Factors)", style="Card.TLabel",
                   font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
 
         # Create table headers with player colors
@@ -3236,17 +3574,17 @@ class BetSuggesterUI:
                            on_click=lambda: self._show_fatigue_details(fatigue, p1_name, p2_name))
         row_num += 1
 
-        # 6. Injury
-        injury = factors.get('injury', {})
-        p1_inj = injury.get('p1', {})
-        p2_inj = injury.get('p2', {})
-        self._add_table_row_v2(table_frame, "6. Injury ▸",
-                           p1_inj.get('status', 'Active'),
-                           p2_inj.get('status', 'Active'),
-                           injury.get('advantage', 0),
-                           injury.get('weight', 0.05),
+        # 6. Activity (edge modifier)
+        activity = factors.get('activity', {})
+        p1_act = activity.get('p1', {})
+        p2_act = activity.get('p2', {})
+        self._add_table_row_v2(table_frame, "6. Activity ▸",
+                           f"{p1_act.get('status', 'Active')} ({p1_act.get('score', 100):.0f})",
+                           f"{p2_act.get('status', 'Active')} ({p2_act.get('score', 100):.0f})",
+                           0.0,  # Edge modifier, not a weighted advantage
+                           0.00,  # Not a weighted factor
                            row_num,
-                           on_click=lambda i=injury: self._show_injury_details(i, p1_name, p2_name))
+                           on_click=lambda a=activity: self._show_activity_details(a, p1_name, p2_name))
         row_num += 1
 
         # 7. Recent Loss
@@ -3480,7 +3818,7 @@ class BetSuggesterUI:
             'surface': 'Surface Record',
             'h2h': 'Head-to-Head',
             'fatigue': 'Fatigue/Rest',
-            'injury': 'Injury Status',
+            'activity': 'Activity Level',
             'opponent_quality': 'Opponent Quality',
             'recency': 'Match Recency',
             'recent_loss': 'Recent Loss',
@@ -3601,10 +3939,10 @@ class BetSuggesterUI:
                 p2_status = factor_data.get('p2', {}).get('status', 'Unknown')
                 return f"{p1_name}: {p1_status}, {p2_name}: {p2_status}"
 
-            elif factor_key == 'injury':
-                p1_status = factor_data.get('p1', {}).get('status', 'Unknown')
-                p2_status = factor_data.get('p2', {}).get('status', 'Unknown')
-                return f"{p1_name}: {p1_status}, {p2_name}: {p2_status}"
+            elif factor_key == 'activity':
+                p1_act = factor_data.get('p1', {})
+                p2_act = factor_data.get('p2', {})
+                return f"{p1_name}: {p1_act.get('status', 'Active')} ({p1_act.get('score', 100):.0f}), {p2_name}: {p2_act.get('status', 'Active')} ({p2_act.get('score', 100):.0f})"
 
             elif factor_key == 'opponent_quality':
                 p1_score = factor_data.get('p1', {}).get('score', 0)
@@ -3649,9 +3987,13 @@ class BetSuggesterUI:
         ttk.Label(value_frame, text="Value Analysis", style="Card.TLabel",
                   font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
-        # Calculate value for both players (log=False for UI display)
-        p1_value = analyzer.find_value(result['p1_probability'], p1_odds, log=False)
-        p2_value = analyzer.find_value(result['p2_probability'], p2_odds, log=False)
+        # Calculate value for both players (log=False for UI display, with serve edge modifier)
+        serve_data_raw = result.get('serve_data') or result.get('factors', {}).get('serve', {}).get('data')
+        activity_data_raw = result.get('activity_data')
+        p1_value = analyzer.find_value(result['p1_probability'], p1_odds, log=False,
+                                        serve_data=serve_data_raw, side='p1', activity_data=activity_data_raw)
+        p2_value = analyzer.find_value(result['p2_probability'], p2_odds, log=False,
+                                        serve_data=serve_data_raw, side='p2', activity_data=activity_data_raw)
 
         # Create comparison table
         row_frame = ttk.Frame(value_frame, style="Card.TFrame")
@@ -3733,9 +4075,13 @@ class BetSuggesterUI:
         ttk.Label(parent, text="Value Analysis", style="Card.TLabel",
                   font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
 
-        # Calculate value for both players (log=False for UI display)
-        p1_value = analyzer.find_value(result['p1_probability'], p1_odds, log=False)
-        p2_value = analyzer.find_value(result['p2_probability'], p2_odds, log=False)
+        # Calculate value for both players (log=False for UI display, with serve edge modifier)
+        serve_data_raw = result.get('serve_data') or result.get('factors', {}).get('serve', {}).get('data')
+        activity_data_raw = result.get('activity_data')
+        p1_value = analyzer.find_value(result['p1_probability'], p1_odds, log=False,
+                                        serve_data=serve_data_raw, side='p1', activity_data=activity_data_raw)
+        p2_value = analyzer.find_value(result['p2_probability'], p2_odds, log=False,
+                                        serve_data=serve_data_raw, side='p2', activity_data=activity_data_raw)
 
         # Create comparison table
         row_frame = ttk.Frame(parent, style="Card.TFrame")
@@ -3815,6 +4161,150 @@ class BetSuggesterUI:
             tk.Label(rec_frame, text=rec_detail, font=("Segoe UI", 8),
                      fg=rec_color, bg=UI_COLORS["bg_medium"]).pack(anchor=tk.W)
 
+    def _create_serve_stats_content(self, parent, p1_id, p2_id, p1_name, p2_name,
+                                      serve_alignment_p1=None, serve_alignment_p2=None):
+        """Create serve/return stats comparison table with alignment indicator."""
+        from database import db
+
+        ttk.Label(parent, text="Serve / Return Stats", style="Card.TLabel",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
+
+        # Serve alignment indicator (edge modifier)
+        if serve_alignment_p1 or serve_alignment_p2:
+            align_frame = ttk.Frame(parent, style="Card.TFrame")
+            align_frame.pack(fill=tk.X, pady=(0, 8))
+
+            ttk.Label(align_frame, text="Edge Modifier:", style="Card.TLabel",
+                      font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+
+            for label, align_info in [(p1_name, serve_alignment_p1), (p2_name, serve_alignment_p2)]:
+                if align_info:
+                    alignment = align_info.get('alignment', 'no_data')
+                    dr_gap = align_info.get('dr_gap', 0)
+                    if alignment == 'aligned':
+                        color = UI_COLORS["success"]
+                        symbol = f"ALIGNED (DR gap {dr_gap:.2f})"
+                    elif alignment == 'conflicted':
+                        reduction = (1 - align_info.get('modifier', 1.0)) * 100
+                        color = UI_COLORS["danger"]
+                        symbol = f"CONFLICT (DR gap {dr_gap:.2f}, edge -{reduction:.0f}%)"
+                    elif alignment == 'neutral':
+                        color = UI_COLORS["success"]
+                        symbol = f"OK (DR gap {dr_gap:.2f} — no concern)"
+                    else:
+                        color = UI_COLORS["text_secondary"]
+                        symbol = "No data"
+
+                    tk.Label(align_frame, text=f"  {label[:20]}: {symbol}",
+                             font=("Segoe UI", 8), fg=color, bg=UI_COLORS["bg_medium"]).pack(anchor=tk.W)
+
+            # Separator
+            ttk.Frame(align_frame, style="Dark.TFrame", height=1).pack(fill=tk.X, pady=(5, 0))
+
+        p1_serve = db.get_player_serve_stats(p1_id) if p1_id else None
+        p2_serve = db.get_player_serve_stats(p2_id) if p2_id else None
+
+        if not p1_serve and not p2_serve:
+            ttk.Label(parent, text="No serve data available",
+                      style="Card.TLabel", foreground=UI_COLORS["text_secondary"],
+                      font=("Segoe UI", 9)).pack(anchor=tk.W, pady=10)
+            return
+
+        row_frame = ttk.Frame(parent, style="Card.TFrame")
+        row_frame.pack(fill=tk.X)
+
+        # Headers
+        headers = ["", p1_name[:20], p2_name[:20]]
+        header_colors = [None, UI_COLORS["player1"], UI_COLORS["player2"]]
+        for i, h in enumerate(headers):
+            if header_colors[i]:
+                tk.Label(row_frame, text=h, font=("Segoe UI", 9, "bold"),
+                         fg=header_colors[i], bg=UI_COLORS["bg_medium"]).grid(
+                    row=0, column=i, padx=8, pady=2)
+            else:
+                ttk.Label(row_frame, text=h, style="Card.TLabel",
+                          font=("Segoe UI", 9, "bold")).grid(
+                    row=0, column=i, padx=8, pady=2)
+
+        # Stat rows: (label, key, format, lower_is_better)
+        stats = [
+            # Section: Serve
+            ("SERVE", None, None, False),
+            ("1st Serve %", "first_serve_pct", "pct", False),
+            ("1st Serve Won", "first_serve_won_pct", "pct", False),
+            ("2nd Serve Won", "second_serve_won_pct", "pct", False),
+            ("Aces/Match", "aces_per_match", "dec", False),
+            ("DFs/Match", "dfs_per_match", "dec", True),
+            ("Svc Games Won", "service_games_won_pct", "pct", False),
+            # Section: Return
+            ("RETURN", None, None, False),
+            ("Return 1st Won", "return_1st_won_pct", "pct", False),
+            ("Return 2nd Won", "return_2nd_won_pct", "pct", False),
+            ("BP Converted", "bp_converted_pct", "pct", False),
+            ("Ret Games Won", "return_games_won_pct", "pct", False),
+            # Section: Overall
+            ("OVERALL", None, None, False),
+            ("BP Saved", "bp_saved_pct", "pct", False),
+            ("Dominance Ratio", "dominance_ratio", "dec", False),
+            ("Tiebreak Won", "tiebreak_won_pct", "pct", False),
+        ]
+
+        row_idx = 1
+        for label, key, fmt, lower_is_better in stats:
+            if key is None:
+                # Section header
+                ttk.Label(row_frame, text=label, style="Card.TLabel",
+                          font=("Segoe UI", 8, "bold")).grid(
+                    row=row_idx, column=0, columnspan=3, padx=8, pady=(6, 1), sticky=tk.W)
+                row_idx += 1
+                continue
+
+            p1_val = p1_serve.get(key) if p1_serve else None
+            p2_val = p2_serve.get(key) if p2_serve else None
+
+            # Determine which is better
+            p1_better = False
+            p2_better = False
+            if p1_val is not None and p2_val is not None:
+                if lower_is_better:
+                    p1_better = p1_val < p2_val
+                    p2_better = p2_val < p1_val
+                else:
+                    p1_better = p1_val > p2_val
+                    p2_better = p2_val > p1_val
+
+            # Format values
+            def fmt_val(val):
+                if val is None:
+                    return "—"
+                if fmt == "pct":
+                    return f"{val:.1f}%"
+                return f"{val:.2f}"
+
+            # Label
+            ttk.Label(row_frame, text=label, style="Card.TLabel",
+                      font=("Segoe UI", 8)).grid(
+                row=row_idx, column=0, padx=8, pady=1, sticky=tk.W)
+
+            # P1 value
+            p1_color = UI_COLORS["success"] if p1_better else UI_COLORS["text_secondary"]
+            tk.Label(row_frame, text=fmt_val(p1_val), font=("Segoe UI", 8),
+                     fg=p1_color, bg=UI_COLORS["bg_medium"]).grid(
+                row=row_idx, column=1, padx=8, pady=1)
+
+            # P2 value
+            p2_color = UI_COLORS["success"] if p2_better else UI_COLORS["text_secondary"]
+            tk.Label(row_frame, text=fmt_val(p2_val), font=("Segoe UI", 8),
+                     fg=p2_color, bg=UI_COLORS["bg_medium"]).grid(
+                row=row_idx, column=2, padx=8, pady=1)
+
+            row_idx += 1
+
+        # Source attribution
+        ttk.Label(parent, text="Source: Tennis Ratio", style="Card.TLabel",
+                  foreground=UI_COLORS["text_secondary"],
+                  font=("Segoe UI", 7)).pack(anchor=tk.W, pady=(8, 0))
+
     def _create_analysis_summary_detailed(self, parent, result: Dict, p1_name: str, p2_name: str,
                                            p1_odds, p2_odds):
         """Create a detailed narrative summary of the analysis."""
@@ -3893,7 +4383,7 @@ class BetSuggesterUI:
 
         factor_names = {
             'ranking': 'Ranking', 'form': 'Form', 'surface': 'Surface',
-            'h2h': 'H2H', 'fatigue': 'Fatigue', 'injury': 'Injury',
+            'h2h': 'H2H', 'fatigue': 'Fatigue', 'activity': 'Activity',
             'opponent_quality': 'Opp Quality', 'recency': 'Recency',
             'recent_loss': 'Recent Loss', 'momentum': 'Momentum'
         }
@@ -4190,6 +4680,7 @@ class BetSuggesterUI:
                         match = result['match']
                         analysis = result.get('analysis')
                         factor_scores = None
+                        surface_score_for_pick = None
                         if analysis and 'factors' in analysis:
                             is_p1_bet = bet.get('selection') == 'player1'
                             factor_scores = {
@@ -4199,13 +4690,22 @@ class BetSuggesterUI:
                                     for fname, fdata in analysis['factors'].items()
                                 }
                             }
+                            # Surface score adjusted for pick direction (for M11)
+                            surface_data = analysis['factors'].get('surface', {})
+                            raw_surface = surface_data.get('advantage', 0) if isinstance(surface_data, dict) else 0
+                            surface_score_for_pick = raw_surface if is_p1_bet else -raw_surface
 
                         models = calculate_bet_model(
                             bet['our_probability'],
                             bet['implied_probability'],
                             match.get('tournament', ''),
                             bet['odds'],
-                            factor_scores
+                            factor_scores,
+                            serve_alignment=bet.get('serve_alignment'),
+                            min_player_matches=self.suggester._get_min_player_matches(match),
+                            activity_driven_edge=bet.get('activity_driven_edge', False),
+                            activity_min_score=bet.get('activity_min_score'),
+                            surface_score_for_pick=surface_score_for_pick
                         )
 
                         # Skip bets that don't qualify for any model
@@ -4230,6 +4730,9 @@ class BetSuggesterUI:
                             'time': match.get('date', ''),
                             'match_str': f"{match.get('player1_name', 'P1')} vs {match.get('player2_name', 'P2')}",
                             'selection': bet['player'],
+                            'bet_type': bet.get('bet_type', 'MW'),  # MW = Match Winner, 2-0 = Set betting
+                            'market_type': bet.get('market_type', 'MATCH_ODDS'),  # For M12 fade bets
+                            'is_m12_fade': bet.get('is_m12_fade', False),
                             'odds': bet['odds'],
                             'our_prob': bet['our_probability'],
                             'implied_prob': bet['implied_probability'],  # For model calculation
@@ -4241,6 +4744,12 @@ class BetSuggesterUI:
                             'value_confidence': bet.get('value_confidence', 'medium'),
                             'in_sweet_spot': bet.get('in_sweet_spot', True),
                             'prob_ratio': bet.get('prob_ratio', 1.0),
+                            # Serve alignment edge modifier
+                            'serve_alignment': bet.get('serve_alignment', 'neutral'),
+                            'serve_modifier': bet.get('serve_modifier', 1.0),
+                            'activity_driven_edge': bet.get('activity_driven_edge', False),
+                            'activity_min_score': bet.get('activity_min_score'),
+                            'surface_score_for_pick': surface_score_for_pick,
                         }
                         self.current_value_bets.append(bet_data)
                         value_count += 1
@@ -4263,6 +4772,13 @@ class BetSuggesterUI:
 
         except Exception as e:
             messagebox.showerror("Analysis Error", str(e))
+
+        # Notify main window to refresh stats (e.g. analysed counter)
+        if self.on_change_callback:
+            try:
+                self.on_change_callback()
+            except Exception:
+                pass
 
     def _populate_value_tree(self):
         """Populate the value bets treeview with current data."""
@@ -4317,21 +4833,44 @@ class BetSuggesterUI:
                 bet_data.get('implied_prob', 1 / bet_data['odds'] if bet_data['odds'] else 0),
                 bet_data.get('tournament', ''),
                 bet_data.get('odds'),
-                factor_scores
+                factor_scores,
+                serve_alignment=bet_data.get('serve_alignment'),
+                activity_driven_edge=bet_data.get('activity_driven_edge', False),
+                activity_min_score=bet_data.get('activity_min_score'),
+                surface_score_for_pick=bet_data.get('surface_score_for_pick')
             )
             # Shorten for display: "Model 1, Model 2" -> "1, 2"
             models_short = models.replace("Model ", "")
+
+            # Serve alignment indicator
+            serve_align = bet_data.get('serve_alignment', 'no_data')
+            if serve_align in ('aligned', 'neutral'):
+                serve_str = "OK"
+            elif serve_align == 'conflicted':
+                reduction = (1 - bet_data.get('serve_modifier', 1.0)) * 100
+                serve_str = f"-{reduction:.0f}%"
+            else:
+                serve_str = "--"
+
+            # Determine bet type (Match Winner or 2-0)
+            bet_type_str = bet_data.get('bet_type', 'MW')  # MW = Match Winner
+            if bet_type_str == '2-0':
+                bet_type_str = '2-0'
+            else:
+                bet_type_str = 'MW'
 
             self.value_tree.insert("", tk.END, iid=str(i), values=(
                 bet_data.get('tour', '?'),
                 time_str,
                 match_str,
                 bet_data['selection'],
+                bet_type_str,
                 odds_str,
                 prob_str,
                 ev_str,
                 units_str,
                 conf_str,
+                serve_str,
                 models_short,
             ), tags=(tag,))
 
@@ -4577,8 +5116,12 @@ class BetSuggesterUI:
                 # Get tournament for duplicate checking
                 tournament = match.get('tournament', '')
 
+                # Get market type (SET_BETTING for M12 2-0 bets, MATCH_ODDS for normal)
+                market_type = bet.get('market_type', 'MATCH_ODDS')
+
                 # Check for duplicate within this batch (handles duplicate upcoming matches)
-                batch_key = (tournament, match_description, selection)
+                # Include market type in batch key to allow 2-0 and MW bets on same match
+                batch_key = (tournament, match_description, selection, market_type)
                 if batch_key in added_this_batch:
                     skipped += 1
                     continue
@@ -4589,7 +5132,8 @@ class BetSuggesterUI:
                     continue
 
                 # Also check if ANY bet exists for this match (prevents betting same match twice)
-                if db.check_match_already_bet(match_description, tournament):
+                # Pass market type - allows SET_BETTING (2-0) and MATCH_ODDS to coexist
+                if db.check_match_already_bet(match_description, tournament, market_type):
                     skipped += 1
                     continue
 
@@ -4626,32 +5170,48 @@ class BetSuggesterUI:
 
                 # Prepare bet data for database
                 import json
+
+                # Determine market name for display
+                if market_type == 'Set Handicap':
+                    market_name = f"Set Betting ({bet.get('bet_type', '2-0')})"
+                else:
+                    market_name = 'Match Winner'
+
                 db_bet = {
                     'match_date': match.get('date', datetime.now().strftime("%Y-%m-%d")),
                     'tournament': match.get('tournament', ''),
                     'match_description': match_description,
                     'player1': match.get('player1_name', ''),
                     'player2': match.get('player2_name', ''),
-                    'market': 'Match Winner',
-                    'selection': selection,
+                    'market': market_type,  # Store the market type for duplicate checking
+                    'selection': f"{selection} {bet.get('bet_type', '')}" if bet.get('bet_type') == '2-0' else selection,
                     'stake': recommended_stake,
                     'odds': bet.get('odds'),
                     'our_probability': bet.get('our_probability'),
                     'implied_probability': bet.get('implied_probability'),
                     'ev_at_placement': bet.get('expected_value'),
-                    'notes': f"Surface: {match.get('surface', '')} | Kelly: {bet.get('kelly_stake_pct', 0):.1f}% | Disagree: {bet.get('disagreement_level', 'N/A')}",
+                    'notes': f"Surface: {match.get('surface', '')} | Kelly: {bet.get('kelly_stake_pct', 0):.1f}% | Disagree: {bet.get('disagreement_level', 'N/A')}" + (f" | M12 fade of {bet.get('original_trigger', '')}" if bet.get('is_m12_fade') else ""),
                     'factor_scores': json.dumps(factor_scores) if factor_scores else None,
                     'weighting': 'Default',  # Single default weight profile
                 }
 
-                # Calculate model tags (M1, M2, etc.)
-                db_bet['model'] = calculate_bet_model(
-                    db_bet.get('our_probability', 0.5),
-                    db_bet.get('implied_probability', 0.5),
-                    db_bet.get('tournament', ''),
-                    db_bet.get('odds'),
-                    factor_scores
-                )
+                # For M12 fade bets, set model directly
+                if bet.get('is_m12_fade'):
+                    db_bet['model'] = f"Model 12 ({bet.get('original_trigger', 'fade')})"
+                else:
+                    # Calculate model tags (M1, M3, M5, etc.)
+                    db_bet['model'] = calculate_bet_model(
+                        db_bet.get('our_probability', 0.5),
+                        db_bet.get('implied_probability', 0.5),
+                        db_bet.get('tournament', ''),
+                        db_bet.get('odds'),
+                        factor_scores,
+                        serve_alignment=bet_data.get('serve_alignment'),
+                        min_player_matches=self.suggester._get_min_player_matches(match),
+                        activity_driven_edge=bet.get('activity_driven_edge', False),
+                        activity_min_score=bet.get('activity_min_score'),
+                        surface_score_for_pick=bet_data.get('surface_score_for_pick')
+                    )
 
                 # Skip bets that don't qualify for any model
                 if db_bet['model'] == "None" or not db_bet['model']:
@@ -4919,10 +5479,14 @@ class BetSuggesterUI:
             bet['implied_probability'],
             match.get('tournament', ''),
             bet.get('odds'),
-            None  # factor_scores not available in card view
+            None,  # factor_scores not available in card view
+            serve_alignment=bet.get('serve_alignment'),
+            activity_driven_edge=bet.get('activity_driven_edge', False),
+            activity_min_score=bet.get('activity_min_score'),
+            surface_score_for_pick=bet.get('surface_score_for_pick')
         )
-        # Color code: green if M2+ models, gray otherwise
-        model_color = UI_COLORS["success"] if any(f"Model {i}" in models for i in range(2, 11)) else UI_COLORS["text_secondary"]
+        # Color code: green if any model qualifies, gold for Model 1
+        model_color = "#FFD700" if "Model 1" in models else (UI_COLORS["success"] if models != "None" else UI_COLORS["text_secondary"])
         tk.Label(model_frame, text=models,
                 fg=model_color, bg=UI_COLORS["bg_medium"],
                 font=("Segoe UI", 9)).pack(anchor=tk.W)
