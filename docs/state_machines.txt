@@ -1,8 +1,49 @@
 ================================================================================
 TENNIS BETTING SYSTEM - STATE MACHINE DIAGRAMS
 ================================================================================
-Generated: January 20, 2026
-Updated: January 22, 2026
+Generated: February 5, 2026
+Version: 3.1
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+CORE FLOWS:
+  1.  Application Startup Flow
+  2.  Betfair Match Capture Flow
+  3.  Player Name Matching Flow
+  4.  Surface Detection Flow
+  5.  Match Analysis Flow (8 Factors)
+  6.  Fatigue Calculation Flow
+  7.  Tennis Explorer Import Flow
+
+BETTING FLOWS:
+  8.  Bet Suggestion Flow
+  9.  Model Assignment Flow (11 Models)
+  10. Unit Staking Calculation Flow
+  11. Add Bet Flow
+  12. Settle Bet Flow
+  13. Duplicate Match Prevention Flow
+
+EDGE MODIFIERS (v3.1):
+  14. Probability Calibration Flow
+  15. Serve Edge Modifier Flow
+  16. Activity Edge Modifier Flow
+
+MONITORING & NOTIFICATIONS:
+  17. Local Monitor Flow
+  18. Discord Bot Commands Flow
+  19. Live Score Detection Flow
+  20. Cloud Sync Flow
+  21. CLV Tracking Flow
+
+UI FEATURES:
+  22. Weekly P/L Calculation Flow
+  23. Tournament Profile Flow
+  24. Player Profile Flow
+  25. Manual Bet Analysis Flow
+  26. Database Management Flow
+
 
 ================================================================================
 1. APPLICATION STARTUP FLOW
@@ -28,39 +69,68 @@ Updated: January 22, 2026
      │                │
      │                ▼
      │         ┌─────────────────┐
-     │         │ Check Public    │
-     │         │ Documents exists│
+     │         │ Set INSTALL_DIR │
+     │         │ = exe location  │
      │         └────────┬────────┘
      │                  │
-     │          ┌───────┴───────┐
-     │          │               │
-     │          ▼               ▼
-     │    ┌──────────┐    ┌──────────────┐
-     │    │  Exists  │    │ First Run    │
-     │    └────┬─────┘    └──────┬───────┘
-     │         │                 │
-     │         │                 ▼
-     │         │         ┌───────────────────┐
-     │         │         │ Copy seed files:  │
-     │         │         │ - tennis_betting  │
-     │         │         │   .db             │
-     │         │         │ - name_mappings   │
-     │         │         │   .json           │
-     │         │         └─────────┬─────────┘
-     │         │                   │
-     │         └─────────┬─────────┘
-     │                   │
-     └─────────┬─────────┘
-               │
-               ▼
-      ┌─────────────────┐
-      │  Create Tables  │
-      │  (if needed)    │
+     └────────┬─────────┘
+              │
+              ▼
+     ┌─────────────────┐
+     │ Set BASE_DIR =  │
+     │ C:/Users/Public/│
+     │ Documents/      │
+     │ Tennis Betting  │
+     │ System          │
+     └────────┬────────┘
+              │
+              ▼
+     ┌─────────────────┐
+     │ Create dirs:    │
+     │ - data/         │
+     │ - output/       │
+     │ - logs/         │
+     └────────┬────────┘
+              │
+              ▼
+     ┌─────────────────┐
+     │ Check DB exists │
+     │ at DB_PATH      │
+     └────────┬────────┘
+              │
+      ┌───────┴───────┐
+      │               │
+      ▼               ▼
+   Exists          Missing
+      │               │
+      │               ▼
+      │        ┌─────────────────┐
+      │        │ Copy seed DB    │
+      │        │ from INSTALL_DIR│
+      │        │ /data/          │
+      │        └────────┬────────┘
+      │                 │
       └────────┬────────┘
                │
                ▼
       ┌─────────────────┐
-      │  Load Main UI   │
+      │ Initialize      │
+      │ TennisDatabase  │
+      │ (create tables) │
+      └────────┬────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Load Main UI    │
+      │ (TennisBetting  │
+      │ App class)      │
+      └────────┬────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Start Optional: │
+      │ - Local Monitor │
+      │ - Auto Mode     │
       └────────┬────────┘
                │
                ▼
@@ -75,12 +145,15 @@ Updated: January 22, 2026
 
     ┌─────────────────┐
     │  Click Capture  │
+    │  (or Auto Mode) │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
     │ Load Betfair    │
     │ Credentials     │
+    │ from credentials│
+    │ .json           │
     └────────┬────────┘
              │
      ┌───────┴───────┐
@@ -93,60 +166,92 @@ Updated: January 22, 2026
      │                │
      ▼                ▼
 ┌─────────┐    ┌─────────────────┐
-│ Show    │    │ Call Betfair    │
-│ Error   │    │ Tennis API      │
-└────┬────┘    └────────┬────────┘
-     │                  │
-     │                  ▼
-     │         ┌─────────────────┐
-     │         │ Parse Matches   │
-     │         └────────┬────────┘
-     │                  │
-     │                  ▼
-     │         ┌─────────────────┐
-     │         │ For Each Match: │
-     │         │ Match Players   │◄─────────────┐
-     │         └────────┬────────┘              │
-     │                  │                       │
-     │                  ▼                       │
-     │         ┌─────────────────┐              │
-     │         │ Name Matcher    │              │
-     │         │ (see Flow #3)   │              │
-     │         └────────┬────────┘              │
-     │                  │                       │
-     │          ┌───────┴───────┐               │
-     │          │               │               │
-     │          ▼               ▼               │
-     │    ┌──────────┐    ┌──────────┐          │
-     │    │  Found   │    │   Not    │          │
-     │    │          │    │  Found   │          │
-     │    └────┬─────┘    └────┬─────┘          │
-     │         │               │               │
-     │         ▼               ▼               │
-     │    ┌──────────┐    ┌──────────┐          │
-     │    │ Link to  │    │ Mark as  │          │
-     │    │ Player   │    │ Unknown  │          │
-     │    └────┬─────┘    └────┬─────┘          │
-     │         │               │               │
-     │         └───────┬───────┘               │
-     │                 │                       │
-     │                 ▼                       │
-     │         ┌─────────────────┐             │
-     │         │ More Matches?   │─────Yes─────┘
-     │         └────────┬────────┘
-     │                  │ No
-     │                  ▼
-     │         ┌─────────────────┐
-     │         │ Save to         │
-     │         │ upcoming_matches│
-     │         └────────┬────────┘
-     │                  │
-     └─────────┬────────┘
-               │
-               ▼
-      ┌─────────────────┐
-      │ Display in UI   │
-      └─────────────────┘
+│ Show    │    │ Login to        │
+│ Error   │    │ Betfair API     │
+└─────────┘    └────────┬────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │ Call listMarket │
+               │ Catalogue       │
+               │ (Tennis, today  │
+               │ + tomorrow)     │
+               └────────┬────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │ Filter Markets: │
+               │ - Min liquidity │
+               │   £100          │
+               │ - Skip in-play  │
+               │ - Skip doubles  │
+               │   (has "/")     │
+               └────────┬────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │ For Each Match  │◄─────────────────┐
+               └────────┬────────┘                  │
+                        │                           │
+                        ▼                           │
+               ┌─────────────────┐                  │
+               │ Parse Runner    │                  │
+               │ Names (P1, P2)  │                  │
+               └────────┬────────┘                  │
+                        │                           │
+                        ▼                           │
+               ┌─────────────────┐                  │
+               │ Surface         │                  │
+               │ Detection       │                  │
+               │ (see Flow #4)   │                  │
+               └────────┬────────┘                  │
+                        │                           │
+                        ▼                           │
+               ┌─────────────────┐                  │
+               │ Name Matcher    │                  │
+               │ (see Flow #3)   │                  │
+               └────────┬────────┘                  │
+                        │                           │
+                        ▼                           │
+               ┌─────────────────┐                  │
+               │ Normalize       │                  │
+               │ Tournament Name │                  │
+               │ (strip year,    │                  │
+               │  fix format)    │                  │
+               └────────┬────────┘                  │
+                        │                           │
+                        ▼                           │
+               ┌─────────────────┐                  │
+               │ More Matches?   │─────Yes──────────┘
+               └────────┬────────┘
+                        │ No
+                        ▼
+               ┌─────────────────┐
+               │ Save to         │
+               │ upcoming_matches│
+               │ table           │
+               └────────┬────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │ Sync Tournament │
+               │ Names           │
+               │ (standardize)   │
+               └────────┬────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │ Sync to Cloud   │
+               │ (if Supabase    │
+               │  configured)    │
+               └────────┬────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │ Display in UI   │
+               │ (X matches      │
+               │  imported)      │
+               └─────────────────┘
 
 
 ================================================================================
@@ -156,10 +261,13 @@ Updated: January 22, 2026
     ┌─────────────────┐
     │ Betfair Name    │
     │ Input           │
+    │ (e.g., "Novak   │
+    │  Djokovic")     │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
+    │ Strategy 0:     │
     │ Check           │
     │ name_mappings   │
     │ .json           │
@@ -168,90 +276,160 @@ Updated: January 22, 2026
      ┌───────┴───────┐
      │               │
      ▼               ▼
-┌─────────┐    ┌─────────────┐
-│ Direct  │    │ Not in      │
-│ Match   │    │ Mappings    │
-└────┬────┘    └──────┬──────┘
-     │                │
-     │                ▼
-     │         ┌─────────────────┐
-     │         │ Strategy 1:     │
-     │         │ Exact Match     │
-     │         └────────┬────────┘
-     │                  │
-     │          ┌───────┴───────┐
-     │          │               │
-     │          ▼               ▼
-     │       Found           Not Found
-     │          │               │
-     │          │               ▼
-     │          │        ┌─────────────────┐
-     │          │        │ Strategy 2:     │
-     │          │        │ Normalized      │
-     │          │        │ (remove -, ')   │
-     │          │        └────────┬────────┘
-     │          │                 │
-     │          │         ┌───────┴───────┐
-     │          │         │               │
-     │          │         ▼               ▼
-     │          │      Found           Not Found
-     │          │         │               │
-     │          │         │               ▼
-     │          │         │        ┌─────────────────┐
-     │          │         │        │ Strategy 3:     │
-     │          │         │        │ First%Last      │
-     │          │         │        └────────┬────────┘
-     │          │         │                 │
-     │          │         │         ┌───────┴───────┐
-     │          │         │         │               │
-     │          │         │         ▼               ▼
-     │          │         │      Found           Not Found
-     │          │         │         │               │
-     │          │         │         │               ▼
-     │          │         │         │        ┌─────────────────┐
-     │          │         │         │        │ Strategy 4:     │
-     │          │         │         │        │ LastName First  │
-     │          │         │         │        └────────┬────────┘
-     │          │         │         │                 │
-     │          │         │         │         ┌───────┴───────┐
-     │          │         │         │         │               │
-     │          │         │         │         ▼               ▼
-     │          │         │         │      Found           Not Found
-     │          │         │         │         │               │
-     │          │         │         │         │               ▼
-     │          │         │         │         │        ┌─────────────────┐
-     │          │         │         │         │        │ Strategy 5:     │
-     │          │         │         │         │        │ Fuzzy Match     │
-     │          │         │         │         │        │ (similarity)    │
-     │          │         │         │         │        └────────┬────────┘
-     │          │         │         │         │                 │
-     │          │         │         │         │         ┌───────┴───────┐
-     │          │         │         │         │         │               │
-     │          │         │         │         │         ▼               ▼
-     │          │         │         │         │    Score > 0.7     Score < 0.7
-     │          │         │         │         │         │               │
-     └──────────┴─────────┴─────────┴─────────┴─────────┤               │
-                                                        │               │
-                                                        ▼               ▼
-                                               ┌─────────────┐   ┌─────────────┐
-                                               │  PLAYER     │   │  UNKNOWN    │
-                                               │  FOUND      │   │  (P1/P2     │
-                                               │             │   │  unknown)   │
-                                               └─────────────┘   └─────────────┘
+  Found          Not Found
+     │               │
+     │               ▼
+     │        ┌─────────────────┐
+     │        │ Strategy 1:     │
+     │        │ Exact Match     │
+     │        │ (case-insens.)  │
+     │        └────────┬────────┘
+     │                 │
+     │         ┌───────┴───────┐
+     │         │               │
+     │         ▼               ▼
+     │      Found           Not Found
+     │         │               │
+     │         │               ▼
+     │         │        ┌─────────────────┐
+     │         │        │ Strategy 2:     │
+     │         │        │ Reversed Name   │
+     │         │        │ "A B" → "B A"   │
+     │         │        └────────┬────────┘
+     │         │                 │
+     │         │         ┌───────┴───────┐
+     │         │         │               │
+     │         │         ▼               ▼
+     │         │      Found           Not Found
+     │         │         │               │
+     │         │         │               ▼
+     │         │         │        ┌─────────────────┐
+     │         │         │        │ Strategy 3:     │
+     │         │         │        │ All Parts Must  │
+     │         │         │        │ Be Present      │
+     │         │         │        │ (any order)     │
+     │         │         │        └────────┬────────┘
+     │         │         │                 │
+     │         │         │         ┌───────┴───────┐
+     │         │         │         │               │
+     │         │         │         ▼               ▼
+     │         │         │      Found           Not Found
+     │         │         │         │               │
+     │         │         │         │               ▼
+     │         │         │         │        ┌─────────────────┐
+     │         │         │         │        │ Strategy 4:     │
+     │         │         │         │        │ First+Last in   │
+     │         │         │         │        │ Any Order       │
+     │         │         │         │        └────────┬────────┘
+     │         │         │         │                 │
+     │         │         │         │         ┌───────┴───────┐
+     │         │         │         │         │               │
+     │         │         │         │         ▼               ▼
+     │         │         │         │      Found           Not Found
+     │         │         │         │         │               │
+     │         │         │         │         │               ▼
+     │         │         │         │         │        ┌─────────────────┐
+     │         │         │         │         │        │ Strategy 5:     │
+     │         │         │         │         │        │ Fuzzy Match     │
+     │         │         │         │         │        │ (difflib 0.85)  │
+     │         │         │         │         │        └────────┬────────┘
+     │         │         │         │         │                 │
+     │         │         │         │         │         ┌───────┴───────┐
+     │         │         │         │         │         │               │
+     │         │         │         │         │         ▼               ▼
+     │         │         │         │         │    Score ≥ 0.85    Score < 0.85
+     │         │         │         │         │         │               │
+     └─────────┴─────────┴─────────┴─────────┴─────────┤               │
+                                                       │               │
+                                                       ▼               ▼
+                                              ┌─────────────┐   ┌─────────────┐
+                                              │  PLAYER     │   │  UNKNOWN    │
+                                              │  FOUND      │   │  (player_id │
+                                              │  (return ID)│   │   = NULL)   │
+                                              └─────────────┘   └─────────────┘
 
 
 ================================================================================
-4. MATCH ANALYSIS FLOW
+4. SURFACE DETECTION FLOW (NEW)
+================================================================================
+
+    ┌─────────────────┐
+    │ Tournament Name │
+    │ + Match Date    │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Check           │
+    │ CLAY_TOURNAMENTS│
+    │ list (60+ names)│
+    └────────┬────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+     ▼               ▼
+  Match           No Match
+     │               │
+     ▼               │
+┌─────────┐          │
+│ Return  │          │
+│ "Clay"  │          │
+└─────────┘          │
+                     ▼
+            ┌─────────────────┐
+            │ Check           │
+            │ GRASS_TOURNAMENTS│
+            │ list            │
+            └────────┬────────┘
+                     │
+             ┌───────┴───────┐
+             │               │
+             ▼               ▼
+          Match           No Match
+             │               │
+             ▼               │
+    ┌─────────────────┐      │
+    │ Is Date in      │      │
+    │ June-July?      │      │
+    │ (Grass Season)  │      │
+    └────────┬────────┘      │
+             │               │
+     ┌───────┴───────┐       │
+     │               │       │
+     ▼               ▼       │
+    Yes              No      │
+     │               │       │
+     ▼               ▼       │
+┌─────────┐    ┌─────────┐   │
+│ Return  │    │ Return  │   │
+│ "Grass" │    │ "Hard"  │   │
+│         │    │ (wrong  │   │
+│         │    │ season) │   │
+└─────────┘    └─────────┘   │
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Default:        │
+                    │ Return "Hard"   │
+                    └─────────────────┘
+
+NOTE: Word boundary matching prevents 'halle' matching 'challenger'
+
+
+================================================================================
+5. MATCH ANALYSIS FLOW (8 Factors)
 ================================================================================
 
     ┌─────────────────┐
     │ Select Match    │
-    │ (Double-click)  │
+    │ (Double-click   │
+    │  or Analyze)    │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
     │ Get Player IDs  │
+    │ (P1, P2)        │
     └────────┬────────┘
              │
      ┌───────┴───────┐
@@ -265,71 +443,105 @@ Updated: January 22, 2026
      │                ▼
      │         ┌─────────────┐
      │         │ Show Error  │
+     │         │ "Unknown    │
+     │         │  player(s)" │
      │         └─────────────┘
      │
      ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    PARALLEL ANALYSIS                         │
+│                 PARALLEL FACTOR CALCULATION                  │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   RANKING    │  │    FORM      │  │   SURFACE    │       │
-│  │   FACTOR     │  │   FACTOR     │  │   FACTOR     │       │
+│  │  FORM (20%)  │  │ SURFACE(22%) │  │ RANKING(13%) │       │
 │  │              │  │              │  │              │       │
-│  │ - Get ranks  │  │ - Last 10    │  │ - Career %   │       │
-│  │ - Or estimate│  │   matches    │  │ - Recent %   │       │
-│  │   from odds  │  │ - Win rate   │  │ - Weighted   │       │
-│  │ - Compare    │  │ - Recency    │  │   combine    │       │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
-│         │                 │                 │               │
+│  │ - Last 10    │  │ - Career %   │  │ - Current    │       │
+│  │   matches    │  │ - Recent 2yr │  │   ATP/WTA    │       │
+│  │ - Win rate   │  │ - has_data   │  │ - Normalize  │       │
+│  │ - Recency    │  │   check      │  │   to 1-200   │       │
+│  │   weighted   │  │ - Weighted   │  │              │       │
+│  └──────┬───────┘  │   combine    │  └──────┬───────┘       │
+│         │          └──────┬───────┘         │               │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │     H2H      │  │   FATIGUE    │  │   INJURY     │       │
-│  │   FACTOR     │  │   FACTOR     │  │   FACTOR     │       │
+│  │ FATIGUE(17%) │  │REC LOSS (8%) │  │   H2H (5%)   │       │
 │  │              │  │              │  │              │       │
-│  │ - Direct     │  │ - Rest days  │  │ - Check      │       │
-│  │   matches    │  │ - Workload   │  │   injury     │       │
-│  │ - Win rate   │  │ - Difficulty │  │   status     │       │
-│  │              │  │ - Fitness    │  │              │       │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
-│         │                 │                 │               │
-└─────────┴─────────────────┴─────────────────┴───────────────┘
+│  │ - Rest days  │  │ - Loss in    │  │ - Direct     │       │
+│  │ - Workload   │  │   last 3d:   │  │   matches    │       │
+│  │   (7d,14d,   │  │   -10%       │  │ - Surface-   │       │
+│  │    30d)      │  │ - Loss in    │  │   specific   │       │
+│  │ - Difficulty │  │   last 7d:   │  │              │       │
+│  └──────┬───────┘  │   -5%        │  └──────┬───────┘       │
+│         │          └──────┬───────┘         │               │
+│  ┌──────────────┐  ┌──────────────┐                         │
+│  │ PERF ELO(13%)│  │MOMENTUM(2%)  │                         │
+│  │              │  │              │                         │
+│  │ - Rolling    │  │ - Win streak │                         │
+│  │   12-month   │  │   on same    │                         │
+│  │   Elo from   │  │   surface    │                         │
+│  │   results    │  │ - Max +10%   │                         │
+│  │ - K-factor   │  │   bonus      │                         │
+│  │   by level   │  │              │                         │
+│  └──────┬───────┘  └──────┬───────┘                         │
+│         │                 │                                  │
+└─────────┴─────────────────┴──────────────────────────────────┘
                             │
                             ▼
                    ┌─────────────────┐
                    │ Apply Weights:  │
+                   │ - Surface: 22%  │
                    │ - Form: 20%     │
-                   │ - Ranking: 20%  │
-                   │ - Surface: 15%  │
-                   │ - H2H: 10%      │
-                   │ - Opp Qual: 10% │
-                   │ - Recency: 8%   │
-                   │ - Fatigue: 5%   │
-                   │ - Injury: 5%    │
-                   │ - Loss: 5%      │
+                   │ - Fatigue: 17%  │
+                   │ - Ranking: 13%  │
+                   │ - Perf Elo: 13% │
+                   │ - Recent Loss:8%│
+                   │ - H2H: 5%       │
                    │ - Momentum: 2%  │
+                   │ (Injury=0%,     │
+                   │  replaced by    │
+                   │  Activity Mod)  │
                    └────────┬────────┘
                             │
                             ▼
                    ┌─────────────────┐
-                   │ Calculate Win   │
-                   │ Probability     │
+                   │ Apply           │
+                   │ Calibration:    │
+                   │ 0.60 shrinkage  │
+                   │ toward 50%      │
+                   │ (asymmetric:    │
+                   │ favorites only) │
                    └────────┬────────┘
                             │
                             ▼
                    ┌─────────────────┐
-                   │ Calculate EV    │
-                   │ vs Betfair Odds │
+                   │ Blend with      │
+                   │ Market:         │
+                   │ 65% model +     │
+                   │ 35% market      │
                    └────────┬────────┘
                             │
                             ▼
                    ┌─────────────────┐
-                   │ Display         │
-                   │ Analysis Dialog │
+                   │ Calculate Edge  │
+                   │ = our_prob -    │
+                   │   implied_prob  │
+                   └────────┬────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │ Output:         │
+                   │ - P1 Win %      │
+                   │ - P2 Win %      │
+                   │ - Edge          │
+                   │ - Factor scores │
+                   │ - WA (weighted  │
+                   │   advantage)    │
+                   │ - Serve align   │
+                   │ - Activity score│
                    └─────────────────┘
 
 
 ================================================================================
-5. FATIGUE CALCULATION FLOW
+6. FATIGUE CALCULATION FLOW
 ================================================================================
 
     ┌─────────────────┐
@@ -406,6 +618,7 @@ Updated: January 22, 2026
                    │ TOTAL SCORE     │
                    │ = Rest + Work   │
                    │   + Base        │
+                   │ (max 100)       │
                    └────────┬────────┘
                             │
                             ▼
@@ -414,17 +627,17 @@ Updated: January 22, 2026
                    │ Status          │
                    └────────┬────────┘
                             │
-            ┌───────────────┼───────────────┐
-            │               │               │
-            ▼               ▼               ▼
-      ┌──────────┐   ┌──────────┐   ┌──────────┐
-      │  90-100  │   │  70-89   │   │   <70    │
-      │  Fresh   │   │  Normal  │   │ Fatigued │
-      └──────────┘   └──────────┘   └──────────┘
+            ┌───────────────┼───────────────┬───────────────┐
+            │               │               │               │
+            ▼               ▼               ▼               ▼
+      ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
+      │  90-100  │   │  70-89   │   │  50-69   │   │   <50    │
+      │  Fresh   │   │  Good    │   │ Moderate │   │  Heavy   │
+      └──────────┘   └──────────┘   └──────────┘   └──────────┘
 
 
 ================================================================================
-6. TENNIS EXPLORER IMPORT FLOW
+7. TENNIS EXPLORER IMPORT FLOW
 ================================================================================
 
     ┌─────────────────┐
@@ -442,6 +655,7 @@ Updated: January 22, 2026
     ┌─────────────────┐
     │ Scrape TE       │
     │ Player Page     │
+    │ (BeautifulSoup) │
     └────────┬────────┘
              │
              ▼
@@ -466,15 +680,15 @@ Updated: January 22, 2026
 │ Update  │   │ Parse Match │                 │
 │ Current │   │ Data:       │                 │
 │ Tourney │   │ - Date      │                 │
-│ & Sfc   │   │ - Opponent  │                 │
-└────┬────┘   │ - Score     │                 │
-     │        │ - Round     │                 │
+│ Surface │   │ - Opponent  │                 │
+│ (Flow#4)│   │ - Score     │                 │
+└────┬────┘   │ - Round     │                 │
      │        └──────┬──────┘                 │
      │               │                        │
      │               ▼                        │
      │        ┌─────────────┐                 │
-     │        │ Is Balance/ │                 │
-     │        │ Stats Table?│                 │
+     │        │ Is Stats    │                 │
+     │        │ Table Row?  │                 │
      │        └──────┬──────┘                 │
      │               │                        │
      │       ┌───────┴───────┐                │
@@ -493,13 +707,6 @@ Updated: January 22, 2026
                             │
                             ▼
                    ┌─────────────────┐
-                   │ Year Boundary   │
-                   │ Check (Jan on   │
-                   │ prev year page) │
-                   └────────┬────────┘
-                            │
-                            ▼
-                   ┌─────────────────┐
                    │ Deduplicate     │
                    │ (same date,     │
                    │ opponent, score)│
@@ -508,6 +715,8 @@ Updated: January 22, 2026
                             ▼
                    ┌─────────────────┐
                    │ Display Preview │
+                   │ (X matches      │
+                   │  found)         │
                    └────────┬────────┘
                             │
                             ▼
@@ -523,6 +732,7 @@ Updated: January 22, 2026
     │    ┌─────────────────┐                                   │
     │    │ Match Players   │                                   │
     │    │ to Database     │                                   │
+    │    │ (Flow #3)       │                                   │
     │    └────────┬────────┘                                   │
     │             │                                            │
     │     ┌───────┴───────┐                                    │
@@ -533,9 +743,8 @@ Updated: January 22, 2026
     │     ▼               ▼                                    │
     │  ┌────────┐    ┌────────────┐                           │
     │  │ INSERT │    │ Skip Match │                           │
-    │  │ Match  │    │ (players   │                           │
-    │  │        │    │  locked)   │                           │
-    │  └────────┘    └────────────┘                           │
+    │  │ Match  │    └────────────┘                           │
+    │  └────────┘                                              │
     │                                                          │
     └─────────────────────────────────────────────────────────┘
                             │
@@ -543,22 +752,26 @@ Updated: January 22, 2026
                    ┌─────────────────┐
                    │ Show Import     │
                    │ Results         │
+                   │ (X imported,    │
+                   │  Y skipped)     │
                    └─────────────────┘
 
 
 ================================================================================
-7. BET SUGGESTION FLOW
+8. BET SUGGESTION FLOW
 ================================================================================
 
     ┌─────────────────┐
     │ Click "Analyze  │
-    │ All"            │
+    │ All" or Auto    │
+    │ Mode triggers   │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
     │ Get All         │
     │ Upcoming Matches│
+    │ from DB         │
     └────────┬────────┘
              │
              ▼
@@ -581,37 +794,39 @@ Updated: January 22, 2026
 ┌─────────┐   ┌─────────────┐                │
 │ Mark    │   │ Run Match   │                │
 │ Status: │   │ Analysis    │                │
-│ Unknown │   │ (Flow #4)   │                │
+│ Unknown │   │ (Flow #5)   │                │
 └────┬────┘   └──────┬──────┘                │
      │               │                       │
      │               ▼                       │
      │        ┌─────────────────┐            │
      │        │ Calculate:      │            │
      │        │ - Win Prob      │            │
-     │        │ - Model Odds    │            │
+     │        │ - Edge          │            │
      │        │ - Confidence    │            │
      │        └────────┬────────┘            │
      │                 │                     │
      │                 ▼                     │
      │        ┌─────────────────┐            │
-     │        │ Confidence      │            │
-     │        │ >= 40%?         │            │
+     │        │ Edge >= 3%?     │            │
      │        └────────┬────────┘            │
      │                 │                     │
      │         ┌───────┴───────┐             │
      │         │               │             │
      │         ▼               ▼             │
-     │        Yes              No            │
+     │       Yes              No             │
      │         │               │             │
      │         ▼               ▼             │
      │   ┌──────────┐    ┌──────────┐        │
-     │   │ Calc EV  │    │ Mark:    │        │
-     │   │ vs Odds  │    │ Low Conf │        │
-     │   └────┬─────┘    └────┬─────┘        │
+     │   │ Assign   │    │ Mark:    │        │
+     │   │ Models   │    │ No Edge  │        │
+     │   │ (Flow#9) │    └────┬─────┘        │
+     │   └────┬─────┘         │             │
      │        │               │             │
      │        ▼               │             │
      │   ┌──────────┐         │             │
-     │   │ EV > 5%? │         │             │
+     │   │ Any      │         │             │
+     │   │ Model    │         │             │
+     │   │ Assigned?│         │             │
      │   └────┬─────┘         │             │
      │        │               │             │
      │    ┌───┴───┐           │             │
@@ -621,8 +836,8 @@ Updated: January 22, 2026
      │    │       │           │             │
      │    ▼       ▼           │             │
      │ ┌──────┐ ┌──────┐      │             │
-     │ │VALUE │ │ No   │      │             │
-     │ │ BET  │ │ Edge │      │             │
+     │ │VALUE │ │ Skip │      │             │
+     │ │ BET  │ │(None)│      │             │
      │ └──┬───┘ └──┬───┘      │             │
      │    │        │          │             │
      └────┴────────┴──────────┴─────────────┘
@@ -630,18 +845,192 @@ Updated: January 22, 2026
                    ▼
           ┌─────────────────┐
           │ Calculate Units │
-          │ (Edge-based)    │
+          │ (Flow #10)      │
           └────────┬────────┘
                    │
                    ▼
           ┌─────────────────┐
-          │ Sort by EV      │
+          │ Sort by:        │
+          │ - Units (desc)  │
+          │ - Edge (desc)   │
+          └────────┬────────┘
+                   │
+                   ▼
+          ┌─────────────────┐
           │ Display Results │
+          │ in Suggester UI │
           └─────────────────┘
 
 
 ================================================================================
-8. UNIT STAKING CALCULATION FLOW
+9. MODEL ASSIGNMENT FLOW (11 Models)
+================================================================================
+
+    ┌─────────────────┐
+    │ Input:          │
+    │ - our_prob      │
+    │ - implied_prob  │
+    │ - odds          │
+    │ - serve_align   │
+    │ - activity_min  │
+    │ - surface_score │
+    │ - player_matches│
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Calculate Edge  │
+    │ = our_prob -    │
+    │   implied_prob  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Check Floors:   │
+    │ - odds ≥ 1.70   │
+    │ - prob ≥ 40%    │
+    │ (reject if not) │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Initialize      │
+    │ models = []     │
+    └────────┬────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 HARD MODELS (gates to betting)               │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 3 (Sharp Zone)                                │     │
+│  │ Criteria: 5% ≤ edge ≤ 15%                          │     │
+│  │ Rationale: Moderate, realistic edges               │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 4 (Favorites)                                 │     │
+│  │ Criteria: our_probability ≥ 60%                    │     │
+│  │ Rationale: High confidence plays only              │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 5 (Underdog)                                  │     │
+│  │ Criteria: edge ≥ 10% AND odds 3.00-10.00           │     │
+│  │           AND both players have 15+ matches        │     │
+│  │ Rationale: Long odds where model sees large edge   │     │
+│  │ WARNING: 5-30 record (14.3%), -13.31u historically │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 7 (Grind)                                     │     │
+│  │ Criteria: 3% ≤ edge ≤ 8% AND odds < 2.50           │     │
+│  │ Rationale: Small edges on short odds               │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 8 (Profitable Baseline)                       │     │
+│  │ Criteria: prob ≥ 55% AND odds < 2.50               │     │
+│  │ Rationale: Moderate confidence + short odds        │     │
+│  │ Performance: 62.5% win rate, +20.5% ROI at n=16    │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    SOFT MODELS (tracking tags)               │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 9 (Value Zone) - SOFT TAG                     │     │
+│  │ Criteria: odds 2.00-2.99 AND serve aligned         │     │
+│  │           AND 5% ≤ edge ≤ 10%                      │     │
+│  │ Rationale: Best odds range + serve validation      │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 10 (Confident Grind) - SOFT TAG               │     │
+│  │ Criteria: odds < 2.20 AND prob ≥ 55%               │     │
+│  │           AND both players active (score ≥ 60)     │     │
+│  │ Rationale: Short odds + active players = reliable  │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 11 (Surface Edge) - SOFT TAG                  │     │
+│  │ Criteria: surface factor ≥ 0.05 for pick           │     │
+│  │           AND odds 2.00-3.50 AND edge ≥ 5%         │     │
+│  │ Rationale: Surface-specific form drives edge       │     │
+│  │ Performance: 61.5% win rate, +48.9% ROI at n=26    │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 2 (Data Confirmed) - SOFT TAG                 │     │
+│  │ Criteria: qualifies for any model above            │     │
+│  │           AND serve data exists for both           │     │
+│  │           AND both players active (score ≥ 40)     │     │
+│  │ Rationale: Data quality confidence marker          │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    PREMIUM MODEL (staking boost)             │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 1 (Triple Confirmation) - PREMIUM             │     │
+│  │ Criteria: qualifies for any hard model             │     │
+│  │           AND serve_alignment == "aligned"         │     │
+│  │           AND NOT activity_driven_edge             │     │
+│  │ Rationale: Model + edge + serve data aligned       │     │
+│  │ Staking: 1.5x multiplier on calculated units       │     │
+│  │ Performance: 65.0% win rate, +55.6% ROI at n=40    │     │
+│  │ This is the proven edge - concentrate bets here    │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    FADE MODEL (counter-signal)               │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ MODEL 12 (2-0 Fade)                                 │     │
+│  │ Trigger: Pure M3 (M3 only) OR any M5               │     │
+│  │          AND opponent match odds 1.20-1.50         │     │
+│  │ Action: Bet opponent wins 2-0 (straight sets)      │     │
+│  │ Rationale: 71% of favourite wins are 2-0           │     │
+│  │            Market prices 2-0 at ~52.5% implied     │     │
+│  │            → 18.5pp edge on straight sets          │     │
+│  │ Performance: 2 bets, 1-1, -0.03u (too early)       │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │ Return:         │
+                   │ "Model 1, M3"   │
+                   │ or "Model 3,    │
+                   │  Model 11"      │
+                   │ or "None"       │
+                   └─────────────────┘
+
+NOTE: Bets with no model assignment are FILTERED OUT
+      Only model-qualifying bets are tracked
+
+KEY INSIGHT (Feb 5, 2026):
+- M1 or M11: 40 bets, 65.0% win rate, +22.53u, +55.6% ROI
+- Everything else: 117 bets, 23.9% win rate, -32.76u
+- Pure M3 alone: 39 bets, 7.7% win rate, -18.76u (catastrophic)
+
+
+================================================================================
+10. UNIT STAKING CALCULATION FLOW
 ================================================================================
 
     ┌─────────────────┐
@@ -658,119 +1047,86 @@ Updated: January 22, 2026
              │
              ▼
     ┌─────────────────┐
-    │ Edge >= 5%?     │
-    └────────┬────────┘
-             │
-     ┌───────┴───────┐
-     │               │
-     ▼               ▼
-    No              Yes
-     │               │
-     ▼               ▼
-┌─────────┐   ┌─────────────┐
-│ No Bet  │   │ Determine   │
-│         │   │ Edge Tier   │
-└─────────┘   └──────┬──────┘
-                     │
-         ┌───────────┼───────────┐
-         │           │           │
-         ▼           ▼           ▼
-    ┌─────────┐ ┌─────────┐ ┌─────────┐
-    │ 5-10%   │ │ 10-15%  │ │  15%+   │
-    │ Edge    │ │ Edge    │ │ Edge    │
-    │         │ │         │ │         │
-    │ 1 Unit  │ │ 2 Units │ │ 3 Units │
-    └────┬────┘ └────┬────┘ └────┬────┘
-         │           │           │
-         └───────────┴───────────┘
-                     │
-                     ▼
-            ┌─────────────────┐
-            │ Check Odds      │
-            │ Scaling         │
-            └────────┬────────┘
-                     │
-     ┌───────────────┼───────────────┐
-     │               │               │
-     ▼               ▼               ▼
-┌─────────┐    ┌─────────┐    ┌─────────┐
-│ <2.00   │    │2.00-5.00│    │  >5.00  │
-│ Short   │    │ Medium  │    │Longshot │
-│         │    │         │    │         │
-│ Max 3u  │    │ Max 2u  │    │ Max 1u  │
-└────┬────┘    └────┬────┘    └────┬────┘
-     │              │              │
-     └──────────────┴──────────────┘
-                    │
-                    ▼
-           ┌─────────────────┐
-           │ Edge > 20%?     │
-           │ (Override)      │
-           └────────┬────────┘
-                    │
-            ┌───────┴───────┐
-            │               │
-            ▼               ▼
-           Yes              No
-            │               │
-            ▼               ▼
-      ┌──────────┐    ┌──────────┐
-      │ Use Edge │    │ Use Odds │
-      │ Units    │    │ Cap      │
-      └────┬─────┘    └────┬─────┘
-           │               │
-           └───────┬───────┘
-                   │
-                   ▼
-          ┌─────────────────┐
-          │ Final Units     │
-          │ (max 3)         │
-          └────────┬────────┘
-                   │
-                   ▼
-          ┌─────────────────┐
-          │ Stake =         │
-          │ Units × 2%      │
-          │ × Bankroll      │
-          └─────────────────┘
-
-
-================================================================================
-9. BET TRACKER - ADD BET FLOW
-================================================================================
-
-    ┌─────────────────┐
-    │ Click "New Bet" │
-    │ OR Prefill from │
-    │ Bet Suggester   │
+    │ Calculate Kelly │
+    │ Fraction =      │
+    │ edge / (odds-1) │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
-    │ Show Add Bet    │
-    │ Dialog          │
+    │ Apply Kelly     │
+    │ Fraction:       │
+    │ × 0.375         │
+    │ (37.5% Kelly)   │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
-    │ Fill Fields:    │
+    │ Apply Modifiers │
+    │ (if applicable) │
+    │ - M1 boost:1.5x │
+    │ - Serve conflict│
+    │   : up to -30%  │
+    │ - No serve data │
+    │   : -50%        │
+    │ - Low activity  │
+    │   : up to -30%  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Apply Floor/Cap │
+    │ Min: 0.25 units │
+    │ Max: 3.0 units  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Round to 0.5u   │
+    │ increments      │
+    │ (0.5, 1.0, 1.5, │
+    │  2.0, 2.5, 3.0) │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Final Units     │
+    │ (0.5, 1.0, 1.5, │
+    │  2.0, 2.5, 3.0) │
+    └─────────────────┘
+
+NOTE: Unit size = 2% of bankroll (configurable)
+      Actual stake = Units × Unit Size × Bankroll
+
+
+================================================================================
+11. ADD BET FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ Click "Add Bet" │
+    │ OR "Add All"    │
+    │ from Suggester  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Collect Fields: │
     │ - Date/Time     │
     │ - Tournament    │
     │ - Match         │
     │ - Market        │
     │ - Selection     │
     │ - Stake/Odds    │
-    └────────┬────────┘
-             │
-             ▼
-    ┌─────────────────┐
-    │ Click "Add Bet" │
+    │ - Model         │
+    │ - Factor Scores │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
     │ Validate Input  │
-    │ (stake, odds)   │
+    │ (stake > 0,     │
+    │  odds > 1.0)    │
     └────────┬────────┘
              │
      ┌───────┴───────┐
@@ -780,37 +1136,58 @@ Updated: January 22, 2026
      │               │
      ▼               ▼
 ┌─────────┐   ┌─────────────────┐
-│ Show    │   │ Check Duplicate │
-│ Error   │   │ (match_desc +   │
-└─────────┘   │  selection)     │
+│ Show    │   │ Check Match     │
+│ Error   │   │ Already Bet     │
+└─────────┘   │ (Flow #13)      │
               └────────┬────────┘
                        │
                ┌───────┴───────┐
                │               │
                ▼               ▼
-          Duplicate       No Duplicate
+          Already Bet      Not Bet
                │               │
                ▼               ▼
          ┌──────────┐    ┌──────────────┐
-         │ Show     │    │ Save to DB   │
-         │ "Already │    └──────┬───────┘
-         │  exists" │           │
-         │ Error    │           ▼
-         └──────────┘    ┌──────────────┐
-                         │ Send Discord │
-                         │ Notification │
-                         │ (if webhook) │
-                         └──────┬───────┘
-                                │
-                                ▼
-                         ┌──────────────┐
-                         │ Close Dialog │
-                         │ Refresh UI   │
-                         └──────────────┘
+         │ Show     │    │ Check Exact  │
+         │ "Match   │    │ Duplicate    │
+         │ already  │    │ (same match  │
+         │ bet"     │    │ + selection) │
+         │ Error    │    └──────┬───────┘
+         └──────────┘           │
+                        ┌───────┴───────┐
+                        │               │
+                        ▼               ▼
+                   Duplicate       Not Dup
+                        │               │
+                        ▼               ▼
+                  ┌──────────┐    ┌──────────────┐
+                  │ Show     │    │ INSERT to    │
+                  │ "Already │    │ bets table   │
+                  │ exists"  │    └──────┬───────┘
+                  └──────────┘           │
+                                         ▼
+                                  ┌──────────────┐
+                                  │ Sync to      │
+                                  │ Supabase     │
+                                  │ (if enabled) │
+                                  └──────┬───────┘
+                                         │
+                                         ▼
+                                  ┌──────────────┐
+                                  │ Send Discord │
+                                  │ Notification │
+                                  │ (green embed)│
+                                  └──────┬───────┘
+                                         │
+                                         ▼
+                                  ┌──────────────┐
+                                  │ Refresh UI   │
+                                  │ Close Dialog │
+                                  └──────────────┘
 
 
 ================================================================================
-10. BET TRACKER - SETTLE BET FLOW
+12. SETTLE BET FLOW
 ================================================================================
 
     ┌─────────────────┐
@@ -832,184 +1209,556 @@ Updated: January 22, 2026
              │
              ▼
     ┌─────────────────┐
+    │ Has Existing    │
+    │ Result?         │
+    └────────┬────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+     ▼               ▼
+    Yes              No
+     │               │
+     ▼               │
+┌──────────┐         │
+│ Confirm  │         │
+│ "Change  │         │
+│ result?" │         │
+└────┬─────┘         │
+     │               │
+     └───────┬───────┘
+             │
+             ▼
+    ┌─────────────────┐
     │ Calculate P/L:  │
     └────────┬────────┘
              │
      ┌───────┼───────┬───────┐
      │       │       │       │
      ▼       ▼       ▼       ▼
-   Win     Loss    Void   Re-settle
+   Win     Loss    Void   Push
      │       │       │       │
      ▼       ▼       ▼       ▼
-┌────────┐ ┌────┐ ┌────┐ ┌────────────┐
-│Profit= │ │P/L │ │P/L │ │ Confirm    │
-│stake × │ │= - │ │= 0 │ │ "Change to │
-│(odds-1)│ │stake│     │ │  [result]?"│
-│×(1-com)│ │    │ │    │ └─────┬──────┘
-└───┬────┘ └─┬──┘ └─┬──┘       │
-    │        │      │          │
-    └────────┴──────┴──────────┘
-                    │
-                    ▼
-           ┌─────────────────┐
-           │ Update DB:      │
-           │ - result        │
-           │ - profit_loss   │
-           │ - settled_at    │
-           └────────┬────────┘
-                    │
-                    ▼
-           ┌─────────────────┐
-           │ Send Discord    │
-           │ Notification    │
-           │ (color by       │
-           │  result)        │
-           └────────┬────────┘
-                    │
-                    ▼
-           ┌─────────────────┐
-           │ Refresh UI      │
-           └─────────────────┘
+┌────────┐┌────┐ ┌────┐ ┌────────┐
+│Profit= ││P/L │ │P/L │ │ P/L    │
+│stake × ││= - │ │= 0 │ │ = 0    │
+│(odds-1)││stake│     │ │        │
+│×0.95   ││    │ │    │ │        │
+│(5% com)││    │ │    │ │        │
+└───┬────┘└─┬──┘ └─┬──┘ └───┬────┘
+    │       │      │        │
+    └───────┴──────┴────────┘
+                   │
+                   ▼
+          ┌─────────────────┐
+          │ Update DB:      │
+          │ - result        │
+          │ - profit_loss   │
+          │ - settled_at    │
+          └────────┬────────┘
+                   │
+                   ▼
+          ┌─────────────────┐
+          │ Update Supabase │
+          │ (if enabled)    │
+          └────────┬────────┘
+                   │
+                   ▼
+          ┌─────────────────┐
+          │ Send Discord    │
+          │ Alert:          │
+          │ Win: Green      │
+          │ Loss: Red       │
+          │ Void: Gray      │
+          └────────┬────────┘
+                   │
+                   ▼
+          ┌─────────────────┐
+          │ Refresh UI      │
+          │ (skip date sync)│
+          └─────────────────┘
 
 
 ================================================================================
-11. BET TRACKER - IN PROGRESS TOGGLE FLOW
+13. DUPLICATE MATCH PREVENTION FLOW (NEW)
 ================================================================================
 
     ┌─────────────────┐
-    │ Select Pending  │
-    │ Bet             │
+    │ Attempting to   │
+    │ Add New Bet     │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
-    │ Click           │
-    │ "In Progress"   │
+    │ Extract match   │
+    │ description     │
+    │ (e.g., "Djokovic│
+    │  vs Alcaraz")   │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
-    │ Get Current     │
-    │ Status          │
+    │ Query bets      │
+    │ table for same  │
+    │ match_description│
+    │ AND tournament  │
+    │ (pending only)  │
     └────────┬────────┘
              │
      ┌───────┴───────┐
      │               │
      ▼               ▼
-  Currently      Not In
-  In Progress    Progress
+  Found           Not Found
      │               │
-     ▼               ▼
-┌──────────┐   ┌──────────┐
-│ Set to   │   │ Set to   │
-│ FALSE    │   │ TRUE     │
-└────┬─────┘   └────┬─────┘
-     │              │
-     ▼              ▼
-┌──────────┐   ┌──────────┐
-│ Discord: │   │ Discord: │
-│ "Status  │   │ "Match   │
-│ Reverted"│   │ Started" │
-│ (gray)   │   │ (blue)   │
-└────┬─────┘   └────┬─────┘
-     │              │
-     └──────┬───────┘
-            │
-            ▼
-   ┌─────────────────┐
-   │ Refresh Table   │
-   │ (blue highlight │
-   │  if in progress)│
-   └─────────────────┘
+     ▼               │
+┌─────────────────┐  │
+│ Return existing │  │
+│ bet info:       │  │
+│ - Selection     │  │
+│ - Stake         │  │
+│ - Odds          │  │
+└────────┬────────┘  │
+         │           │
+         ▼           │
+┌─────────────────┐  │
+│ BLOCK BET       │  │
+│ "A bet already  │  │
+│ exists for this │  │
+│ match.          │  │
+│ Selection: X    │  │
+│ You cannot bet  │  │
+│ on both players"│  │
+└─────────────────┘  │
+                     │
+                     ▼
+            ┌─────────────────┐
+            │ ALLOW BET       │
+            │ (proceed to     │
+            │  Flow #11)      │
+            └─────────────────┘
+
+NOTE: This prevents betting on BOTH sides of the same match
+      (not just exact duplicates)
 
 
 ================================================================================
-12. DISCORD NOTIFICATION FLOW
+14. PROBABILITY CALIBRATION FLOW (v3.1)
 ================================================================================
 
     ┌─────────────────┐
-    │ Bet Action      │
-    │ Triggered       │
+    │ Raw Model       │
+    │ Probability     │
+    │ (e.g., 65%)     │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
-    │ Get Webhook URL │
-    │ from app_       │
-    │ settings table  │
+    │ Is probability  │
+    │ > 50%?          │
+    │ (favorite)      │
     └────────┬────────┘
              │
      ┌───────┴───────┐
      │               │
      ▼               ▼
-   Empty          Has URL
+   Yes              No (underdog)
      │               │
      ▼               ▼
-┌─────────┐   ┌─────────────────┐
-│ Silent  │   │ Build Embed     │
-│ Return  │   └────────┬────────┘
-└─────────┘            │
-                       ▼
-              ┌─────────────────┐
-              │ Determine Type  │
-              └────────┬────────┘
-                       │
-     ┌─────────┬───────┼───────┬─────────┐
-     │         │       │       │         │
-     ▼         ▼       ▼       ▼         ▼
-  ┌─────┐  ┌─────┐ ┌─────┐ ┌─────┐  ┌─────────┐
-  │ Add │  │Settl│ │Edit │ │ In  │  │ Batch   │
-  │ Bet │  │  e  │ │     │ │Prog │  │ Add     │
-  └──┬──┘  └──┬──┘ └──┬──┘ └──┬──┘  └────┬────┘
-     │        │       │       │          │
-     ▼        ▼       ▼       ▼          ▼
-  Green    Win:Green Amber  Blue      Green
-           Loss:Red         /Gray     +Table
-           Void:Gray
-     │        │       │       │          │
-     └────────┴───────┴───────┴──────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │ Spawn Background│
-              │ Thread          │
-              └────────┬────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │ POST to Discord │
-              │ Webhook URL     │
-              │ (5s timeout)    │
-              └────────┬────────┘
-                       │
-               ┌───────┴───────┐
-               │               │
-               ▼               ▼
-            Success         Failure
-               │               │
-               ▼               ▼
-          ┌─────────┐    ┌─────────┐
-          │ Message │    │ Silent  │
-          │ Appears │    │ Fail    │
-          │ in      │    │ (don't  │
-          │ Discord │    │ disrupt │
-          └─────────┘    │ app)    │
-                         └─────────┘
+┌─────────────┐ ┌─────────────┐
+│ Apply       │ │ Keep raw    │
+│ Shrinkage:  │ │ probability │
+│             │ │ (asymmetric │
+│ calibrated  │ │ = True)     │
+│ = 0.5 +     │ │             │
+│ (raw - 0.5) │ │ No phantom  │
+│ × 0.60      │ │ longshot    │
+│             │ │ inflation   │
+│ 65% → 59%   │ └──────┬──────┘
+│ 70% → 62%   │        │
+│ 80% → 68%   │        │
+└──────┬──────┘        │
+       │               │
+       └───────┬───────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Blend with      │
+      │ Market:         │
+      │                 │
+      │ final =         │
+      │ calibrated×0.65 │
+      │ + market×0.35   │
+      │                 │
+      │ (market_weight  │
+      │  = 0.35)        │
+      └────────┬────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Final           │
+      │ Probability     │
+      │ (used for edge  │
+      │ calculation)    │
+      └─────────────────┘
+
+NOTE: Asymmetric calibration (v3.1.9) only shrinks favorites.
+      This prevents calibration from inflating underdog probabilities
+      and creating phantom edges on longshots.
+
+EXAMPLE:
+  Raw model: 65%, Market implied: 50%
+  After shrinkage: 0.5 + (0.65 - 0.5) × 0.60 = 59%
+  After blend: 59% × 0.65 + 50% × 0.35 = 55.85%
+  Edge: 55.85% - 50% = 5.85pp (down from 15pp raw)
 
 
 ================================================================================
-13. MASS-ADD BETS FROM SUGGESTER FLOW
+15. SERVE EDGE MODIFIER FLOW (v2.62)
 ================================================================================
 
     ┌─────────────────┐
-    │ Click "Add All  │
-    │ to Tracker"     │
+    │ Tennis Ratio    │
+    │ Serve Data:     │
+    │ - Pick DR       │
+    │ - Opponent DR   │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
-    │ Confirm Dialog: │
-    │ "Add all X bets?│
+    │ Both players    │
+    │ have data?      │
+    └────────┬────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+     ▼               ▼
+    No              Yes
+     │               │
+     ▼               │
+┌─────────────┐      │
+│ Apply       │      │
+│ no-data     │      │
+│ staking     │      │
+│ factor:     │      │
+│ 0.50x stake │      │
+│             │      │
+│ (50% less   │      │
+│ on blind    │      │
+│ bets)       │      │
+└─────────────┘      │
+                     ▼
+            ┌─────────────────┐
+            │ Calculate       │
+            │ DR Gap =        │
+            │ |Pick DR -      │
+            │  Opp DR|        │
+            └────────┬────────┘
+                     │
+                     ▼
+            ┌─────────────────┐
+            │ DR Gap < 0.10?  │
+            │ (noise zone)    │
+            └────────┬────────┘
+                     │
+             ┌───────┴───────┐
+             │               │
+             ▼               ▼
+           Yes              No
+             │               │
+             ▼               ▼
+      ┌───────────┐  ┌─────────────────┐
+      │ Serve     │  │ Is serve data   │
+      │ alignment │  │ aligned with    │
+      │ = NEUTRAL │  │ our pick?       │
+      │           │  │ (pick DR > opp) │
+      │ No edge   │  └────────┬────────┘
+      │ reduction │           │
+      └───────────┘   ┌───────┴───────┐
+                      │               │
+                      ▼               ▼
+                    Yes              No
+                      │               │
+                      ▼               ▼
+               ┌───────────┐  ┌─────────────────┐
+               │ Serve     │  │ CONFLICTED      │
+               │ alignment │  │                 │
+               │ = ALIGNED │  │ Calculate edge  │
+               │           │  │ reduction:      │
+               │ Qualifies │  │                 │
+               │ for M1    │  │ conflict_strength│
+               │           │  │ = (gap - 0.10)  │
+               │ No edge   │  │   / 0.20        │
+               │ reduction │  │   (capped 0-1)  │
+               └───────────┘  │                 │
+                              │ edge_reduction  │
+                              │ = conflict ×    │
+                              │   0.20          │
+                              │                 │
+                              │ Max 20% edge    │
+                              │ reduction       │
+                              │                 │
+                              │ ALSO: staking   │
+                              │ reduced up to   │
+                              │ 30% for worst   │
+                              │ conflicts       │
+                              └─────────────────┘
+
+DR = Dominance Ratio = (service games won) / (return games won)
+Higher DR = stronger server relative to return
+
+
+================================================================================
+16. ACTIVITY EDGE MODIFIER FLOW (v3.1)
+================================================================================
+
+    ┌─────────────────┐
+    │ For Each Player │
+    │ Calculate       │
+    │ Activity Score  │
+    └────────┬────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│              ACTIVITY SCORE CALCULATION                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ SIGNAL A: Match Count (0-60 points)                 │     │
+│  │                                                     │     │
+│  │ Count matches in last 90 days:                     │     │
+│  │   >= 12 matches: 60 pts (fully active)             │     │
+│  │   >= 8 matches:  40-60 pts (moderate)              │     │
+│  │   >= 4 matches:  15-40 pts (low)                   │     │
+│  │   < 4 matches:   0-15 pts (inactive)               │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │ SIGNAL B: Gap Analysis (0-40 points)                │     │
+│  │                                                     │     │
+│  │ Find largest gap between matches (120 days):       │     │
+│  │   <= 14 days: 40 pts (normal scheduling)           │     │
+│  │   <= 21 days: 30-40 pts (minor gap)                │     │
+│  │   <= 35 days: 15-30 pts (concerning)               │     │
+│  │   <= 60 days: 0-15 pts (severe)                    │     │
+│  │   > 60 days:  0 pts (returning player)             │     │
+│  └────────────────────────────────────────────────────┘     │
+│                                                              │
+│  Total Score = Signal A + Signal B (0-100)                  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Activity Score  │
+    │ Labels:         │
+    │                 │
+    │ >= 80: Active   │
+    │ >= 60: Moderate │
+    │ >= 40: Low      │
+    │ >= 20: Returning│
+    │ < 20: Inactive  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Use MINIMUM     │
+    │ score of both   │
+    │ players         │
+    │                 │
+    │ (weakest link)  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Min Score >= 70?│
+    │ (active thresh) │
+    └────────┬────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+     ▼               ▼
+   Yes              No
+     │               │
+     ▼               ▼
+┌─────────────┐ ┌─────────────────┐
+│ Modifier    │ │ Calculate       │
+│ = 1.0       │ │ edge reduction: │
+│             │ │                 │
+│ No edge     │ │ reduction =     │
+│ reduction   │ │ (70 - min_score)│
+│             │ │ / 70 × 0.40     │
+│             │ │                 │
+│             │ │ Max 40% edge    │
+│             │ │ reduction       │
+│             │ │                 │
+│             │ │ Score 50 → 11%  │
+│             │ │ Score 30 → 23%  │
+│             │ │ Score 10 → 34%  │
+└─────────────┘ └────────┬────────┘
+                         │
+                         ▼
+                ┌─────────────────┐
+                │ Min Score < 50? │
+                │ (staking thresh)│
+                └────────┬────────┘
+                         │
+                 ┌───────┴───────┐
+                 │               │
+                 ▼               ▼
+               Yes              No
+                 │               │
+                 ▼               │
+          ┌─────────────┐        │
+          │ Additional  │        │
+          │ staking     │        │
+          │ reduction:  │        │
+          │ up to 30%   │        │
+          │             │        │
+          │ (on top of  │        │
+          │ edge reduc) │        │
+          └─────────────┘        │
+                                 │
+                                 ▼
+                        ┌─────────────────┐
+                        │ No additional   │
+                        │ staking penalty │
+                        └─────────────────┘
+
+NOTE: Activity modifier replaces the old Injury factor (which was 5%).
+      It operates as a post-probability edge modifier, not a weighted factor.
+
+NOTE (Obs 18): Current design uses min(pick, opponent) activity.
+      This means betting AGAINST an inactive player still gets penalized.
+      May need asymmetric treatment if data shows this is too conservative.
+
+
+================================================================================
+17. LOCAL MONITOR FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ start_monitor   │
+    │ .vbs (Windows   │
+    │ startup)        │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Load Credentials│
+    │ - Betfair       │
+    │ - Supabase      │
+    │ - Discord Bot   │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Initialize:     │
+    │ - Betfair Client│
+    │ - Discord Bot   │
+    │ - Alert Queues  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Start Discord   │
+    │ Bot (async)     │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Every 30 sec:   │◄─────────────────────┐
+    │ Main Loop       │                      │
+    └────────┬────────┘                      │
+             │                               │
+             ▼                               │
+    ┌─────────────────┐                      │
+    │ Get Pending     │                      │
+    │ Bets from       │                      │
+    │ Supabase        │                      │
+    └────────┬────────┘                      │
+             │                               │
+             ▼                               │
+    ┌─────────────────┐                      │
+    │ For Each Bet:   │◄─────────┐           │
+    └────────┬────────┘          │           │
+             │                   │           │
+             ▼                   │           │
+    ┌─────────────────┐          │           │
+    │ Check Betfair   │          │           │
+    │ Market Status   │          │           │
+    └────────┬────────┘          │           │
+             │                   │           │
+     ┌───────┴───────┬───────┐   │           │
+     │               │       │   │           │
+     ▼               ▼       ▼   │           │
+  IN_PLAY        CLOSED   OTHER  │           │
+     │               │       │   │           │
+     ▼               ▼       │   │           │
+┌─────────┐   ┌──────────┐   │   │           │
+│ Was     │   │ Determine│   │   │           │
+│ previously│  │ Winner   │   │   │           │
+│ not live?│  └────┬─────┘   │   │           │
+└────┬────┘        │         │   │           │
+     │             ▼         │   │           │
+     │        ┌──────────┐   │   │           │
+ ┌───┴───┐    │ Our bet  │   │   │           │
+ │       │    │ won?     │   │   │           │
+ ▼       ▼    └────┬─────┘   │   │           │
+Yes      No        │         │   │           │
+ │       │     ┌───┴───┐     │   │           │
+ ▼       │     │       │     │   │           │
+┌────┐   │     ▼       ▼     │   │           │
+│Send│   │    Win     Loss   │   │           │
+│LIVE│   │     │       │     │   │           │
+│Alert│  │     ▼       ▼     │   │           │
+│(blue)│ │  ┌─────┐ ┌─────┐  │   │           │
+└────┘   │  │Send │ │Send │  │   │           │
+ │       │  │WIN  │ │LOSS │  │   │           │
+ ▼       │  │Alert│ │Alert│  │   │           │
+┌────────┐  │(grn)│ │(red)│  │   │           │
+│Add to  │  └──┬──┘ └──┬──┘  │   │           │
+│previously│   │       │     │   │           │
+│_live set│    │       │     │   │           │
+└────────┘     │       │     │   │           │
+               │       │     │   │           │
+               ▼       ▼     │   │           │
+          ┌──────────────┐   │   │           │
+          │ Update:      │   │   │           │
+          │ - Supabase   │   │   │           │
+          │ - Local DB   │   │   │           │
+          └──────────────┘   │   │           │
+               │             │   │           │
+               └─────────────┴───┘           │
+                                             │
+                             ┌───────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Sleep 30 sec    │
+                    └────────┬────────┘
+                             │
+                             └───────────────────►
+
+
+================================================================================
+18. DISCORD BOT COMMANDS FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ User sends      │
+    │ message in      │
+    │ Discord channel │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Bot receives    │
+    │ on_message      │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Starts with     │
+    │ "!" prefix?     │
     └────────┬────────┘
              │
      ┌───────┴───────┐
@@ -1019,119 +1768,724 @@ Updated: January 22, 2026
      │               │
      ▼               ▼
 ┌─────────┐   ┌─────────────────┐
-│ Cancel  │   │ Init Counters:  │
-└─────────┘   │ added=0         │
-              │ skipped=0       │
-              │ added_bets=[]   │
-              └────────┬────────┘
+│ Ignore  │   │ Parse Command   │
+└─────────┘   └────────┬────────┘
                        │
-                       ▼
-              ┌─────────────────┐
-              │ For Each Bet    │◄────────┐
-              └────────┬────────┘         │
-                       │                  │
-                       ▼                  │
-              ┌─────────────────┐         │
-              │ Check Duplicate │         │
-              │ (match + select)│         │
-              └────────┬────────┘         │
-                       │                  │
-               ┌───────┴───────┐          │
-               │               │          │
-               ▼               ▼          │
-          Duplicate       Not Dup         │
-               │               │          │
-               ▼               ▼          │
-         ┌──────────┐    ┌──────────┐     │
-         │ skipped++│    │ Add to DB│     │
-         └────┬─────┘    │ added++  │     │
-              │          │ Track bet│     │
-              │          └────┬─────┘     │
-              │               │           │
-              └───────┬───────┘           │
-                      │                   │
-                      ▼                   │
-              ┌─────────────────┐         │
-              │ More Bets?      │────Yes──┘
-              └────────┬────────┘
-                       │ No
-                       ▼
-              ┌─────────────────┐
-              │ Send Batch      │
-              │ Discord Notif   │
-              │ (table format)  │
-              └────────┬────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │ Show Result:    │
-              │ "Added X bets.  │
-              │ Y duplicates    │
-              │ skipped."       │
-              └────────┬────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │ Disable "Add    │
-              │ All" Button     │
-              └─────────────────┘
+       ┌───────┬───────┬───────┬───────┬───────┬───────┐
+       │       │       │       │       │       │       │
+       ▼       ▼       ▼       ▼       ▼       ▼       ▼
+   !inplay !pending !stats !alert !refresh !resend !data
+       │       │       │       │       │       │       │
+       ▼       ▼       ▼       ▼       ▼       ▼       ▼
+┌─────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐
+│ Query   ││ Query   ││ Query   ││ Manual  ││ Check   ││ Re-send ││ Show    │
+│ bets    ││ bets    ││ settled ││ alert   ││ Betfair ││ last    ││ model   │
+│ is_live ││ pending ││ bets    ││ for bet ││ + settle││ result  ││ analysis│
+│ =True   ││         ││         ││         ││ matches ││ alert   ││ data    │
+└────┬────┘└────┬────┘└────┬────┘└────┬────┘└────┬────┘└────┬────┘└────┬────┘
+     │         │         │         │         │         │         │
+     ▼         ▼         ▼         ▼         ▼         ▼         ▼
+┌─────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐
+│ Format  ││ Format  ││ Calc:   ││ Parse   ││ Update  ││ Fetch   ││ Query   │
+│ ASCII   ││ ASCII   ││ P/L,ROI ││ args    ││ closing ││ last    ││ recent  │
+│ table   ││ table   ││ W-L,    ││ win/loss││ odds,   ││ settled ││ analysis│
+│         ││         ││ by model││ + match ││ settle  ││ bet     ││ logs    │
+└────┬────┘└────┬────┘└────┬────┘└────┬────┘└────┬────┘└────┬────┘└────┬────┘
+     │         │         │         │         │         │         │
+     └─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+                              │
+                              ▼
+                     ┌─────────────────┐
+                     │ Send response   │
+                     │ to channel      │
+                     └─────────────────┘
 
 
 ================================================================================
-14. SETTINGS DIALOG FLOW (Discord Webhook)
+19. LIVE SCORE DETECTION FLOW
 ================================================================================
 
     ┌─────────────────┐
-    │ Click "Settings"│
-    │ in Bet Tracker  │
+    │ Bet Tracker     │
+    │ Refresh (30s)   │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
-    │ Load Current    │
-    │ Webhook URL     │
-    │ from DB         │
+    │ Login Betfair   │
+    │ (lazy - reuse   │
+    │ session)        │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Call listMarket │
+    │ Catalogue with  │
+    │ inPlayOnly=true │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Get Pending     │
+    │ Bets            │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ For Each Bet:   │◄─────────────────────┐
+    └────────┬────────┘                      │
+             │                               │
+             ▼                               │
+    ┌─────────────────┐                      │
+    │ Match bet to    │                      │
+    │ in-play market  │                      │
+    │ (by player      │                      │
+    │ names)          │                      │
+    └────────┬────────┘                      │
+             │                               │
+     ┌───────┴───────┐                       │
+     │               │                       │
+     ▼               ▼                       │
+  Match           No Match                   │
+     │               │                       │
+     ▼               ▼                       │
+┌─────────┐   ┌─────────────┐                │
+│ Set     │   │ Display     │                │
+│ Live =  │   │ "-" in      │                │
+│ "In-Play│   │ Live col    │                │
+│ "       │   └──────┬──────┘                │
+└────┬────┘          │                       │
+     │               │                       │
+     ▼               │                       │
+┌─────────────┐      │                       │
+│ Highlight   │      │                       │
+│ row blue    │      │                       │
+└──────┬──────┘      │                       │
+       │             │                       │
+       └─────────────┴───────────────────────┘
+                     │
+                     ▼
+            ┌─────────────────┐
+            │ Update Status:  │
+            │ "Live: X live   │
+            │ (HH:MM:SS)"     │
+            └─────────────────┘
+
+
+================================================================================
+20. CLOUD SYNC FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ Bet Action      │
+    │ (Add/Settle/    │
+    │ Edit)           │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Check Supabase  │
+    │ Config Exists   │
+    └────────┬────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+     ▼               ▼
+  Missing         Configured
+     │               │
+     ▼               ▼
+┌─────────┐   ┌─────────────────┐
+│ Skip    │   │ Build Bet Data  │
+│ Cloud   │   │ Dict            │
+│ Sync    │   └────────┬────────┘
+└─────────┘            │
+                       ▼
+              ┌─────────────────┐
+              │ Is New Bet?     │
+              └────────┬────────┘
+                       │
+               ┌───────┴───────┐
+               │               │
+               ▼               ▼
+             New            Update
+               │               │
+               ▼               ▼
+         ┌──────────┐    ┌──────────────┐
+         │ INSERT   │    │ UPDATE       │
+         │ to cloud │    │ existing row │
+         │ bets     │    │ (by id)      │
+         └────┬─────┘    └──────┬───────┘
+              │                 │
+              └────────┬────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Success?        │
+              └────────┬────────┘
+                       │
+               ┌───────┴───────┐
+               │               │
+               ▼               ▼
+            Success         Failure
+               │               │
+               ▼               ▼
+         ┌──────────┐    ┌──────────────┐
+         │ Log      │    │ Log Error    │
+         │ Success  │    │ (silent,     │
+         │ (silent) │    │ don't block) │
+         └──────────┘    └──────────────┘
+
+SUPABASE TABLE SCHEMA:
+  - id (matches local bet ID)
+  - match_description
+  - selection
+  - odds, stake
+  - our_probability
+  - tournament
+  - result, profit_loss
+  - is_live
+  - market_id (for Betfair lookup)
+  - created_at, settled_at
+
+
+================================================================================
+21. CLV TRACKING FLOW (v2.61)
+================================================================================
+
+CLV = Closing Line Value = how our odds compare to closing odds.
+Positive CLV = we got better odds than the market's final price.
+
+    ┌─────────────────┐
+    │ Bet Placed      │
+    │ odds = X        │
+    │ (e.g., 2.50)    │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Match Starts    │
+    │ (or shortly     │
+    │ before)         │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Local Monitor   │
+    │ OR !refresh cmd │
+    │ fetches closing │
+    │ odds from       │
+    │ Betfair API     │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Store in DB:    │
+    │ odds_at_close   │
+    │ (e.g., 2.20)    │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Calculate CLV:  │
+    │                 │
+    │ implied_open =  │
+    │ 1 / odds_open   │
+    │ = 1/2.50 = 40%  │
+    │                 │
+    │ implied_close = │
+    │ 1 / odds_close  │
+    │ = 1/2.20 = 45.5%│
+    │                 │
+    │ CLV =           │
+    │ implied_close - │
+    │ implied_open    │
+    │ = +5.5%         │
+    │                 │
+    │ (positive = we  │
+    │ got value)      │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Store CLV in DB │
+    │ for analysis    │
+    └─────────────────┘
+
+CLV INTERPRETATION:
+  +CLV: Market moved toward our pick (good - we got value)
+  -CLV: Market moved away from our pick (bad - we were on wrong side)
+
+CURRENT STATS (Feb 5, 2026):
+  Overall: -5.42% avg CLV (n=98)
+  M1/M11: -1.65% avg CLV, 39% positive CLV rate
+  Other:  -6.57% avg CLV, 15% positive CLV rate
+
+NOTE (Obs 17): CLV is a weaker signal in tennis than in other sports.
+      Yield (ROI) matters more. M1+M11 have +55.6% ROI despite -1.65% CLV.
+
+
+================================================================================
+22. WEEKLY P/L CALCULATION FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ Statistics Tab  │
+    │ Refresh         │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Get Current     │
+    │ Date            │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Calculate       │
+    │ Monday of       │
+    │ Current Week    │
+    │ (today -        │
+    │ weekday days)   │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Query Bets:     │
+    │ WHERE settled_at│
+    │ BETWEEN monday  │
+    │ AND sunday      │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ For Each Bet:   │◄─────────────────────┐
+    └────────┬────────┘                      │
+             │                               │
+             ▼                               │
+    ┌─────────────────┐                      │
+    │ Get Day of Week │                      │
+    │ from settled_at │                      │
+    └────────┬────────┘                      │
+             │                               │
+             ▼                               │
+    ┌─────────────────┐                      │
+    │ Accumulate:     │                      │
+    │ - staked        │                      │
+    │ - returned      │                      │
+    │   (stake+profit │                      │
+    │    if win)      │                      │
+    │ - profit        │                      │
+    └────────┬────────┘                      │
+             │                               │
+             └───────────────────────────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Calculate ROI   │
+              │ for each day    │
+              │ = profit/staked │
+              │ × 100           │
+              └────────┬────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Repeat for      │
+              │ Last Week       │
+              │ (week_offset=-1)│
+              └────────┬────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Update Grid UI: │
+              │ - Mon-Sun cols  │
+              │ - Staked row    │
+              │ - Returned row  │
+              │ - Profit row    │
+              │   (color-coded) │
+              │ - ROI% row      │
+              │   (color-coded) │
+              │ - Total column  │
+              └─────────────────┘
+
+
+================================================================================
+23. TOURNAMENT PROFILE FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ Database Mgmt   │
+    │ > Tournaments   │
+    │ Tab             │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Search or       │
+    │ "Show All"      │
+    └────────┬────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+     ▼               ▼
+  Search          Show All
+     │               │
+     ▼               ▼
+┌─────────────┐ ┌─────────────┐
+│ Query WHERE │ │ Query all   │
+│ name LIKE   │ │ ORDER BY    │
+│ '%term%'    │ │ match_count │
+└──────┬──────┘ └──────┬──────┘
+       │               │
+       └───────┬───────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Display in      │
+      │ Treeview:       │
+      │ - Name          │
+      │ - Surface       │
+      │ - Match Count   │
+      └────────┬────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Select          │
+      │ Tournament      │
+      └────────┬────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Query:          │
+      │ - Basic info    │
+      │ - Total matches │
+      │ - Date range    │
+      │ - Top performers│
+      │ - Recent matches│
+      └────────┬────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ Display Profile:│
+      │                 │
+      │ ┌─────────────┐ │
+      │ │ ID: 123     │ │
+      │ │ Surface:    │ │
+      │ │   [Clay]    │ │
+      │ │ Category:   │ │
+      │ │   Challenger│ │
+      │ │ Matches: 245│ │
+      │ └─────────────┘ │
+      │                 │
+      │ Top Performers: │
+      │ 1. Player A (5W)│
+      │ 2. Player B (4W)│
+      │                 │
+      │ Recent Matches: │
+      │ [Color-coded    │
+      │  match list]    │
+      │                 │
+      │ [Edit Button]   │
+      └─────────────────┘
+
+
+================================================================================
+24. PLAYER PROFILE FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ Database Mgmt   │
+    │ > Players Tab   │
+    │ OR Click name   │
+    │ in analysis     │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Search or       │
+    │ Select Player   │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Query player    │
+    │ data:           │
+    │ - Basic info    │
+    │ - Rankings      │
+    │ - Surface stats │
+    │ - Recent matches│
+    │ - Fatigue       │
+    │ - Notable wins  │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────────────────────────────┐
+    │              PLAYER PROFILE              │
+    ├─────────────────────────────────────────┤
+    │                                          │
+    │  ┌────────────────────────────────────┐ │
+    │  │ Basic Info (compact row)           │ │
+    │  │ ID: 12345 | Name: John Smith       │ │
+    │  │ Ranking: #45 | ELO: 1523           │ │
+    │  └────────────────────────────────────┘ │
+    │                                          │
+    │  ┌────────────────────────────────────┐ │
+    │  │ Current Status                     │ │
+    │  │ Days Since: 3 | Fatigue: Fresh(92) │ │
+    │  │ 7d: 2 matches | 30d: 8 matches     │ │
+    │  └────────────────────────────────────┘ │
+    │                                          │
+    │  ┌────────────────────────────────────┐ │
+    │  │ Surface Performance (color-coded)  │ │
+    │  │ Hard:  45 matches | 62.2% ✓        │ │
+    │  │ Clay:  12 matches | 41.7%          │ │
+    │  │ Grass:  3 matches | 66.7% ✓        │ │
+    │  └────────────────────────────────────┘ │
+    │                                          │
+    │  ┌────────────────────────────────────┐ │
+    │  │ Notable Results                    │ │
+    │  │ Best Win: #12 Player (2025-08-15)  │ │
+    │  │ Worst Loss: #234 Player (2025-09)  │ │
+    │  └────────────────────────────────────┘ │
+    │                                          │
+    │  ┌────────────────────────────────────┐ │
+    │  │ Recent Matches (Last 10)           │ │
+    │  │ [Green=Win, Red=Loss]              │ │
+    │  │ 2026-01-25 H W vs Player A (#67)   │ │
+    │  │ 2026-01-22 H L vs Player B (#23)   │ │
+    │  │ Form: 6W-4L (60%)                  │ │
+    │  └────────────────────────────────────┘ │
+    │                                          │
+    │  [Edit Button]                          │
+    │                                          │
+    └─────────────────────────────────────────┘
+
+
+================================================================================
+25. MANUAL BET ANALYSIS FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ Click "Manual   │
+    │ Bet" on Home    │
     └────────┬────────┘
              │
              ▼
     ┌─────────────────┐
     │ Show Dialog:    │
-    │ - URL Input     │
-    │ - Test Button   │
-    │ - Save/Cancel   │
+    │ - Player 1 input│
+    │ - Player 2 input│
+    │ - Surface select│
+    │ - Analyze button│
     └────────┬────────┘
              │
-     ┌───────┴───────┬───────────┐
-     │               │           │
-     ▼               ▼           ▼
-   Test           Save        Cancel
-     │               │           │
-     ▼               ▼           ▼
-┌──────────┐  ┌──────────┐  ┌─────────┐
-│ Save URL │  │ Save URL │  │ Close   │
-│ Temp     │  │ to DB    │  │ Dialog  │
-└────┬─────┘  └────┬─────┘  └─────────┘
-     │             │
-     ▼             ▼
-┌──────────┐  ┌──────────┐
-│ Send     │  │ Show     │
-│ Test Msg │  │ "Saved"  │
-└────┬─────┘  │ & Close  │
-     │        └──────────┘
-     │
- ┌───┴───┐
- │       │
- ▼       ▼
-OK     Fail
- │       │
- ▼       ▼
-┌────┐ ┌────────┐
-│Succ│ │ "Check │
-│ess │ │ your   │
-│Msg│ │ URL"   │
-└────┘ └────────┘
+             ▼
+    ┌─────────────────┐
+    │ Type Player 1   │
+    │ Name (min 2     │
+    │ chars)          │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Search Database │
+    │ (LIKE %name%)   │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Show Dropdown   │
+    │ Overlay with    │
+    │ Matching Players│
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Select Player   │
+    │ (stores ID)     │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Repeat for      │
+    │ Player 2        │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Select Surface  │
+    │ (Hard/Clay/     │
+    │ Grass)          │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Click "Analyze" │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Run Match       │
+    │ Analysis        │
+    │ (Flow #5)       │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────────────────────────────┐
+    │          ANALYSIS POPUP                  │
+    ├─────────────────────────────────────────┤
+    │                                          │
+    │  Player 1: 54.3%  vs  Player 2: 45.7%   │
+    │  [Green]              [Gray]             │
+    │                                          │
+    │  Factor Analysis:                        │
+    │  ┌────────────────────────────────────┐ │
+    │  │ Factor    │ P1    │ P2    │ Diff   │ │
+    │  │───────────┼───────┼───────┼────────│ │
+    │  │ Form      │ 0.62  │ 0.54  │ +0.08  │ │
+    │  │ Surface   │ 0.58  │ 0.49  │ +0.09  │ │
+    │  │ Ranking   │ 0.65  │ 0.45  │ +0.20  │ │
+    │  │ ...       │       │       │        │ │
+    │  └────────────────────────────────────┘ │
+    │                                          │
+    │  Recent Matches: [P1 last 5] [P2 last 5]│
+    │                                          │
+    │  Summary:                                │
+    │  "Model favors Player 1. Key factors:   │
+    │   Ranking (+0.20), Surface (+0.09)"     │
+    │                                          │
+    └─────────────────────────────────────────┘
+
+
+================================================================================
+26. DATABASE MANAGEMENT FLOW
+================================================================================
+
+    ┌─────────────────┐
+    │ Click "Database │
+    │ Management"     │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Show Window     │
+    │ with Tabs:      │
+    │ - Players       │
+    │ - Tournaments   │
+    └────────┬────────┘
+             │
+     ┌───────┴───────┐
+     │               │
+     ▼               ▼
+  Players        Tournaments
+     │               │
+     ▼               ▼
+┌─────────────┐ ┌─────────────┐
+│ Search box  │ │ Search box  │
+│ Show All btn│ │ Show All btn│
+│ Check Data  │ │ Sync Names  │
+│ btn         │ │ btn         │
+└──────┬──────┘ └──────┬──────┘
+       │               │
+       ▼               ▼
+┌─────────────┐ ┌─────────────┐
+│ Results     │ │ Results     │
+│ Treeview    │ │ Treeview    │
+│ (sortable)  │ │ (sortable)  │
+└──────┬──────┘ └──────┬──────┘
+       │               │
+       ▼               ▼
+┌─────────────┐ ┌─────────────┐
+│ Select item │ │ Select item │
+│ → Profile   │ │ → Profile   │
+│ (Flow #24)  │ │ (Flow #23)  │
+└──────┬──────┘ └──────┬──────┘
+       │               │
+       ▼               ▼
+┌─────────────┐ ┌─────────────┐
+│ Edit btn    │ │ Edit btn    │
+│ → Edit      │ │ → Edit      │
+│ Dialog      │ │ Dialog      │
+└─────────────┘ └─────────────┘
+
+EDIT PLAYER DIALOG:
+  - Name (cascades to matches)
+  - Ranking
+  - Country
+  - ELO
+
+EDIT TOURNAMENT DIALOG:
+  - Name (cascades to matches, bets, upcoming)
+  - Surface (updates all matches)
+  - Category (Grand Slam, Masters, etc.)
 
 
 ================================================================================
 END OF STATE MACHINE DIAGRAMS
+================================================================================
+
+SUMMARY - VERSION 3.1 (Feb 2026):
+
+1. 8-FACTOR MODEL:
+   Factor weights: surface 22%, form 20%, fatigue 17%, ranking 13%,
+                   performance_elo 13%, recent_loss 8%, h2h 5%, momentum 2%
+   - injury factor REMOVED → replaced by Activity Edge Modifier
+
+2. 11 BETTING MODELS:
+   HARD MODELS (gates to betting):
+   - M3 (Sharp Zone): 5-15% edge
+   - M4 (Favorites): prob ≥ 60%
+   - M5 (Underdog): edge ≥ 10%, odds 3-10, 15+ matches (WARNING: -13.31u)
+   - M7 (Grind): 3-8% edge, odds < 2.50
+   - M8 (Profitable Baseline): prob ≥ 55%, odds < 2.50
+
+   SOFT MODELS (tracking tags):
+   - M2 (Data Confirmed): serve data + both active
+   - M9 (Value Zone): odds 2.00-2.99, serve aligned, 5-10% edge
+   - M10 (Confident Grind): odds < 2.20, prob ≥ 55%, both active
+   - M11 (Surface Edge): surface factor ≥ 0.05, odds 2.00-3.50, edge ≥ 5%
+
+   PREMIUM MODEL:
+   - M1 (Triple Confirmation): hard model + serve aligned + not activity-driven
+     Performance: 65.0% win rate, +55.6% ROI at n=40 (PROVEN EDGE)
+
+   FADE MODEL:
+   - M12 (2-0 Fade): Pure M3/M5 → bet opponent wins 2-0
+
+3. EDGE MODIFIERS (post-probability):
+   - Serve Edge Modifier: up to -20% edge when serve conflicts
+   - Activity Edge Modifier: up to -40% edge for returning/inactive players
+
+4. PROBABILITY CALIBRATION:
+   - Shrinkage: 0.60 factor (asymmetric - favorites only)
+   - Market blend: 65/35 model/market
+
+5. KELLY STAKING:
+   - Base fraction: 0.375 (37.5% Kelly)
+   - M1 boost: 1.5x
+   - No serve data: 0.50x
+   - Low activity: up to 0.70x
+
+6. KEY INSIGHT (Feb 5, 2026):
+   - M1 or M11: 40 bets, 26-14 (65.0%), +22.53u, +55.6% ROI
+   - Everything else: 117 bets, 28-89 (23.9%), -32.76u, -40.0% ROI
+   - Pure M3 alone: 39 bets, 3-36 (7.7%), -18.76u (catastrophic)
+
+7. FEATURES:
+   - Local Monitor with Discord Bot (!inplay, !pending, !stats, !refresh, !resend, !data)
+   - Cloud Sync via Supabase
+   - CLV Tracking (closing odds from Betfair)
+   - Tennis Ratio serve/return stats integration
+   - Performance Elo ratings
+   - Weekly P/L Grid
+   - Tournament/Player Profiles
+   - Manual Bet Analysis
+   - Live Score Detection
+
+8. INTEGRATIONS:
+   - Discord Bot (commands + alerts with CLV)
+   - Supabase (cloud PostgreSQL)
+   - Betfair API (odds + in-play + closing odds)
+   - Tennis Ratio (serve/return stats)
+   - Tennis Explorer (match history)
+
 ================================================================================
